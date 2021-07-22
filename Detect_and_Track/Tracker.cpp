@@ -20,7 +20,7 @@ using namespace std;
 int mode = 1; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
 
 const char* winname = "Takip ekrani"; 
-const int win_size_h = 608, win_size_w = 608; // fixed win sizes
+int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 
 std::string keys =
@@ -64,7 +64,8 @@ int main(int argc, char** argv)
 	CV_Assert(parser.has("model"));
 	std::string modelPath = findFile(parser.get<String>("model"));
 	std::string configPath = findFile(parser.get<String>("config"));
-
+	
+	// model object definitons
 	model_param param = {modelName, modelPath, configPath, parser.get<String>("framework"), parser.get<int>("backend"), 
 						parser.get<int>("target"), parser.get<int>("async")};
 	model yolov4(param);
@@ -73,14 +74,17 @@ int main(int argc, char** argv)
 	yolov4.scale = parser.get<float>("scale");
 	yolov4.swapRB = parser.get<float>("rgb");
 	yolov4.mean = parser.get<float>("mean");
-	yolov4.inpHeigth = parser.get<int>("height");
-	yolov4.inpWidth = parser.get<int>("width");
+	win_size_h = parser.get<int>("height");
+	win_size_w = parser.get<int>("width");
+	yolov4.inpHeigth = win_size_h;
+	yolov4.inpWidth = win_size_w;
 	if (parser.has("classes"))
 		yolov4.get_classes(parser.get<string>("classes"));
 	
 	string filename;
 	if(parser.has("input"))
 		filename = parser.get<String>("input");
+
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
 
 	VideoCapture video;
@@ -103,98 +107,86 @@ int main(int argc, char** argv)
 
 	cout << cv::getBuildInformation << endl; // get build inf - contrib is installed ?
 
-	Mat frame, grayFrame, grayROI;
-	bool check = video.read(frame);// ilk frame'i al
-	resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
-
-
-	Rect2d bbox;//selectROI(frame); // ROI select
-	float confidence = yolov4.getObject<Rect2d>(frame, bbox);
-	CV_Assert(confidence>0);
-	Rect2d exp_bbox = bbox; // expected box -- mossenin verdiði yeni konumda boyutlandýrýlacak box 
-	cout << "model has done..." << endl;
-	cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
-	grayROI = grayFrame(bbox); // ROI the gray !!!
-
-	
+	Mat frame, grayFrame, grayROI; // frame storages
+	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
 	Mat probmap; // target pixels probabilities map
 	Mat back_hist_old = Mat(Size(1, 256), CV_32F, Scalar(0)); // TEST --> eski histogramý tutmak için 
-	Size distSize = Size(grayROI.cols / frame_ratio, grayROI.rows / frame_ratio); // outer box extra size
-	foregroundHistProb(grayROI, distSize, back_hist_old, probmap, val); // calc prob map that represents target shape
+	Size distSize, baseSize; // sizes getting from moments (new size / base size)
 
-
-	Size baseSize = momentSize(probmap); // get size from moments with using prob's map
-	cout << "base values[width-height] =  " << baseSize << endl;
-
-
-	// Display inner box(original bbox size) and processed (outer) bbox size.
-	Rect innerBox = Rect(Center(bbox) - Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2),
-		Center(bbox) + Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2));
-	rectangle(grayROI, innerBox, Scalar(255, 0, 0)); // background rect drawing
-	imshow("foreprob", grayROI);
-	rectangle(frame, bbox, Scalar(255, 0, 0), 2, 1);
-	imshow(winname, frame);
-
-	waitKey(0);
-	tracker->init(frame, bbox); // initialize tracker
-	bool track_or_detect = true;
+	bool track_or_detect = false; 
 	while (true)
 	{
 		if (mode)
 		{
-			if (video.read(frame));
-			else
+			if (!video.read(frame)) // frame read control
 				break; // if frame error occurs
 
-			if (track_or_detect)
+			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
+			cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
+
+			if (!track_or_detect) // detection mode
 			{
-				// Start timer
-				resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // ekraný tekrar boyutlandýrma 
-				double timer = (double)getTickCount(); // sayacý baþlatýyoruz
+				// get bbox from model...
+				float confidence = yolov4.getObject<Rect2d>(frame, bbox);
+				CV_Assert(confidence > 0);
+				cout << "model initiated..." << endl;
+				
+				//selectROI(frame); // manuel select
+				exp_bbox = bbox; // expected box -- mossenin verdigi yeni konumda boyutlandirilacak box 
+				grayROI = grayFrame(bbox); // ROI the gray !!!
 
-				cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // frame graye dönüþtürüldü
-				check = tracker->update(grayFrame, bbox); // MOSSE uygulandý
+				distSize = Size(grayROI.cols / frame_ratio, grayROI.rows / frame_ratio); // outer box's extra size
+				foregroundHistProb(grayROI, distSize, back_hist_old, probmap, val); // calc prob map that represents target shape
 
-				//examined box update
-				distSize = Size(grayROI.cols / frame_ratio, grayROI.rows / frame_ratio);
-				exp_bbox = Rect(Center(bbox) - Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2),
-					Center(bbox) + Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2)); // get new object square position to calc size
-				grayROI = grayFrame(exp_bbox); // ROI with new position but old size 
+				Size baseSize = momentSize(probmap); // get size from moments with using prob's map
+				cout << "base values[width-height] =  " << baseSize << endl;
 
-				foregroundHistProb(grayROI, distSize, back_hist_old, probmap, val);
-
-				// moment hesabý
-				Size nSize = momentSize(probmap);
-				exp_bbox = Rescale(bbox, baseSize, nSize); // rescale with moments
-
-				float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
-
-				if (check)
+				///////////////////   DELETE THIS SECTION /////////////////////////////////
+				// Display inner box(original bbox size) and processed (outer) bbox size.
+				//Rect innerBox = Rect(Center(bbox) - Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2),
+				//	Center(bbox) + Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2)); // inner region remaining in bbox
+				//rectangle(grayROI, innerBox, Scalar(255, 0, 0)); // background rect drawing
+				//imshow("foreprob", grayROI);
+				//rectangle(frame, bbox, Scalar(255, 0, 0), 2, 1);
+				//imshow(winname, frame);
+				//////////////////////////////////////////////////////////////////////////
+				tracker->init(frame, bbox); // initialize tracker
+				//waitKey(0);
+				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
+			}
+			else // tracking 
+			{ 
+				double timer = (double)getTickCount(); // start FPS timer
+				bool check = tracker->update(grayFrame, bbox); // MOSSE initiated
+				if (check) // tracking check
 				{
-					rectangle(frame, exp_bbox, Scalar(255, 0, 0), 2, 1);
+					distSize = Size(grayROI.cols / frame_ratio, grayROI.rows / frame_ratio);
+					exp_bbox = Rect(Center(bbox) - Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2),
+						Center(bbox) + Point((exp_bbox.width + distSize.width) / 2, (exp_bbox.height + distSize.height) / 2)); // get new object square position to calc size
+					grayROI = grayFrame(exp_bbox); // ROI with new position but old size 
+
+					foregroundHistProb(grayROI, distSize, back_hist_old, probmap, val);
+
+					Size nSize = momentSize(probmap); 	// moment calc
+					exp_bbox = Rescale(bbox, baseSize, nSize); // rescale with moments
+
+					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
+
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
-						// FPS'i yaz
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 				}
 				else
 				{
 					// Tracking failure detected.
-					putText(frame, "Tracking failure detected", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 0, 255), 2);
-					putText(frame, "Model initiated", Point(100, 120), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(220, 0, 20), 2);
-					track_or_detect = false;
+					putText(frame, "Tracking lost...", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 50, 200), 2);
+					track_or_detect = false; // return to the detection mode ...
 				}
 			}
-			else
-			{
-				confidence = yolov4.getObject<Rect2d>(frame, bbox);
-				rectangle(frame, bbox, Scalar(255, 0, 0), 2, 1);
-				drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
-				track_or_detect = true;
-			}
 		}
-		// Son frame'i göster
-		imshow(winname, frame);
-		waitKey(0); // frame by frame gitmek için -- REMOVE BEFORE FLIGHT !!!
+
+		rectangle(frame, exp_bbox, Scalar(255, 0, 0), 2, 1);
+		imshow(winname, frame);// show final result ...
+		waitKey(0); // to move frame by frame -- REMOVE BEFORE FLIGHT !!!
 
 		int keyboard = waitKey(5); // kullanýcýdan kontrol tuþu al 
 		if (keyboard == 'q' || keyboard == 27) // quit
@@ -203,7 +195,6 @@ int main(int argc, char** argv)
 			mode = 0;
 		else if (keyboard == 'r' || keyboard == 114) // return
 			mode = 1;
-
 	}
 	return 0;
 }
