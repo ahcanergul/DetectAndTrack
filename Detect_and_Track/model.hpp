@@ -49,9 +49,10 @@ class model
 			
 			std::vector<Mat> outs;
 			net.forward(outs, outNames);
-
-			postprocess(frame, outs, net, m_param.backend);
 			
+			postprocess(frame, outs, net, m_param.backend);
+			cout << "post process completed..." << endl;
+
 			if (this->boxes.size() > 1)
 			{
 				for (size_t i = 0; i < this->boxes.size(); i++)
@@ -62,10 +63,11 @@ class model
 
 					rectangle(frame, box, Scalar(255, 255, 255));
 					std::string label = format("%.2f", conf);
+				
 					if (!this->classes.empty())
 					{
 						CV_Assert(classId < (int)classes.size());
-						label = std::to_string(i) + ": " + classes[classId] + "-" + label;
+						label = std::to_string((int)i) + ": " + classes[classId] + "-" + label;
 					}
 
 					int baseLine;
@@ -75,15 +77,18 @@ class model
 					rectangle(frame, Point(box.x, box.y - labelSize.height),
 						Point(box.x + labelSize.width, box.y + baseLine), Scalar::all(255), FILLED);
 					putText(frame, label, Point(box.x, box.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar());
+					
 				}
-
+				waitKey(1000);
 				putText(frame, "hedeflerden bir tanesini secin", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 255, 10), 2);
 				imshow("detections", frame);
-
+				
 				int keyboard = -1;
 				while (keyboard < 0)
-					keyboard = waitKey(5);
+					keyboard = waitKey(10);	
 				keyboard = (int)(keyboard - 48);
+				CV_Assert(keyboard > 0);
+
 				bbox = this->boxes.at(keyboard);
 				confidence = this->confidences.at(keyboard);
 			}
@@ -98,7 +103,7 @@ class model
 			{
 				putText(frame, "hedef bulunamadi", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 0, 255), 2);
 				imshow("detections", frame);
-				return false;
+				return 0;
 			}
 			return confidence;
 		}

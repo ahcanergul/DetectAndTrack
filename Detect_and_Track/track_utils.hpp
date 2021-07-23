@@ -4,23 +4,56 @@
 #define SSTR( x ) (static_cast< std::ostringstream >(( std::ostringstream() << std::dec << x ) ).str()) // number to string / itoa()
 #define Center( r ) (Point((r.x + r.width/2),(r.y + r.height/2))) // r rect merkezi
 
-Rect Rescale(Rect2d bbox, Size oldSize, Size newSize)
+Rect Rescale(Rect2d bbox, Size oldSize, Size newSize, Size frame ,int frameRatio = frame_ratio)
 {
 	float w = newSize.width / oldSize.width; // change ratio in bbox size 
 	float h = newSize.height / oldSize.height;
 	Point center = Center(bbox);
 
-	w = MAX(bbox.width * w, 3); // 0 boyuta inmemesi için en az 3 ile sýnýrladýk
-	h = MAX(bbox.height * h, 3);
+	w = MIN(MIN(w, 2 * center.x - w / frameRatio), 2 * (frame.width - center.x - w / frameRatio)) +1; // 0 boyuta inmemesi için en az 3 ile sýnýrladýk
+	h = MIN(MIN(h, 2 * center.y - h / frameRatio), 2 * (frame.height - center.y - h / frameRatio)) +1;
 	return Rect(center.x - w / 2, center.y - h / 2, w, h);
 }
+
+
+Size momentSize(Mat probmap)
+{
+	Moments mu = moments(probmap);
+	float X = mu.m10 / mu.m00;
+	float Y = mu.m01 / mu.m00;
+	float a = (mu.m20 / mu.m00) - X * X;
+	float b = 2 * ((mu.m11 / mu.m00) - X * Y);
+	float c = (mu.m02 / mu.m00) - Y * Y;
+	float width = sqrt(((a + c) - sqrt(b * b + (a - c) * (a - c))) / 2);
+	float height = sqrt(((a + c) + sqrt(b * b + (a - c) * (a - c))) / 2);
+
+	return Size(width, height);
+}
+
+template <typename recT>
+class scaleBox
+{
+	public:
+		Size distSize, baseSize; // sizes getting from moments (new size / base size)
+		Mat back_hist_old = Mat(Size(1, 256), CV_32F, Scalar(0)); // TEST --> eski histogramý tutmak için
+		recT bbox; // prev box
+
+		void init(Mat grayFrame, recT bbox);
+		recT updateSize(Mat grayFrame, recT bbox);
+
+	protected:
+		void foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int value=val);
+	private:
+		Mat grayROI, probmap; // target pixels probabilities map
+};
 
 /*
 --------------------- foregroundHistProb -------------------------
 	arkaplandaki pixel deðerlerini boxun olasýlýðýndan çýkarýyoruz 
 	val: bir deðerin histogramdan çýkarýlmasý için gereken en az pixel sayýsý  
 */
-void foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int val=4) 
+template <typename recT>
+void scaleBox<recT>::foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int value) 
 {
 	Mat mask = Mat(in.size(), CV_8U, Scalar(0)); // foreground mask
 	mask(Rect(Point(distSize.width, distSize.height), Point(in.cols - distSize.width, in.rows - distSize.height))).setTo(Scalar::all(255)); // set all pixel in mask
@@ -37,7 +70,7 @@ void foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int val
 
 	normalize(back_hist, back_hist, 0, 255, NORM_MINMAX, -1, Mat()); //normalize histograms
 	normalize(fore_hist, fore_hist, 0, 255, NORM_MINMAX, -1, Mat());
-	threshold(back_hist, back_hist, val, 255, THRESH_BINARY); // val == arkaplandan bir deðerin alýnma sýnýrý default 4 - 4 pixel veya az varsa alýnabilir demek
+	threshold(back_hist, back_hist, value, 255, THRESH_BINARY); // val == arkaplandan bir deðerin alýnma sýnýrý default 4 - 4 pixel veya az varsa alýnabilir demek
 	hist = back_hist;// | hist; //--> TEST old histogramý da hesaba katarak daha iyi sonuc elde edebilir miyiz ?
 	fore_hist = fore_hist & (255 - hist); // XOR(or substract) foreground with background
 	normalize(fore_hist, fore_hist, 0, 255, NORM_MINMAX, -1, Mat()); // deðerleri normalize ediyoruz --> hatalý çýktý verebiliyor(teoride gerekli deðil)  
@@ -64,16 +97,30 @@ void foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int val
 	imshow("prob Demo", probHist); // olasýk haritasý gösterimi
 }
 
-Size momentSize(Mat probmap)
-{
-	Moments mu = moments(probmap);
-	float X = mu.m10 / mu.m00;
-	float Y = mu.m01 / mu.m00;
-	float a = (mu.m20 / mu.m00) - X * X;
-	float b = 2 * ((mu.m11 / mu.m00) - X * Y);
-	float c = (mu.m02 / mu.m00) - Y * Y;
-	float width = sqrt(((a + c) - sqrt(b * b + (a - c) * (a - c))) / 2);
-	float height = sqrt(((a + c) + sqrt(b * b + (a - c) * (a - c))) / 2);
 
-	return Size(width,height);
+template <typename recT>
+void scaleBox<recT>::init(Mat grayFrame, recT bbox)
+{
+	grayROI = grayFrame(bbox); // ROI the gray !!!
+	this->distSize = Size(grayROI.cols / frame_ratio, grayROI.rows / frame_ratio); // outer box's extra size
+	foregroundHistProb(grayROI, this->distSize, back_hist_old, probmap, val); // calc prob map that represents target shape
+
+	this->baseSize = momentSize(probmap); // get size from moments with using prob's map
+	this->bbox = bbox;
+	//cout << "base values[width-height] =  " << baseSize << endl;
+}
+
+
+template <typename recT>
+recT scaleBox<recT>::updateSize(Mat grayFrame, recT bbox)
+{
+	distSize = Size(this->bbox.cols / frame_ratio, this->bbox.rows / frame_ratio);
+	this->bbox= Rect(Center(bbox) - Point((this->bbox.width + distSize.width) / 2, (this->bbox.height + distSize.height) / 2),
+			 Center(bbox) + Point((this->bbox.width + distSize.width) / 2, (this->bbox.height + distSize.height) / 2)); // get new object square position to calc size
+	grayROI = grayFrame(this->bbox); // ROI with new position but old size 
+
+	foregroundHistProb(grayROI, distSize, back_hist_old, probmap);
+
+	Size nSize = momentSize(probmap); 	// moment calc
+	return Rescale(this->bbox, baseSize, nSize, grayFrame.size(), frame_ratio); // rescale with moment
 }
