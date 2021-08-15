@@ -4,7 +4,8 @@
 #define SSTR( x ) (static_cast< std::ostringstream >(( std::ostringstream() << std::dec << x ) ).str()) // number to string / itoa()
 #define Center( r ) (Point((r.x + r.width/2),(r.y + r.height/2))) // r rect merkezi
 
-Rect Rescale(Rect2d bbox, Size oldSize, Size newSize, Size frame ,int frameRatio = frame_ratio)
+template <typename recT>
+recT Rescale(recT bbox, Size oldSize, Size newSize, Size frame ,int frameRatio = frame_ratio)
 {
 	float w = newSize.width / oldSize.width; // change ratio in bbox size 
 	float h = newSize.height / oldSize.height;
@@ -12,11 +13,11 @@ Rect Rescale(Rect2d bbox, Size oldSize, Size newSize, Size frame ,int frameRatio
 
 	w = MIN(MIN(w, 2 * center.x - w / frameRatio), 2 * (frame.width - center.x - w / frameRatio)) +1; // 0 boyuta inmemesi için en az 3 ile sýnýrladýk
 	h = MIN(MIN(h, 2 * center.y - h / frameRatio), 2 * (frame.height - center.y - h / frameRatio)) +1;
-	return Rect(center.x - w / 2, center.y - h / 2, w, h);
+	return recT(center.x - w / 2, center.y - h / 2, w, h);
 }
 
 
-Size momentSize(Mat probmap)
+inline Size momentSize(Mat probmap)
 {
 	Moments mu = moments(probmap);
 	float X = mu.m10 / mu.m00;
@@ -114,7 +115,7 @@ void scaleBox<recT>::init(Mat grayFrame, recT bbox)
 template <typename recT>
 recT scaleBox<recT>::updateSize(Mat grayFrame, recT bbox)
 {
-	distSize = Size(this->bbox.cols / frame_ratio, this->bbox.rows / frame_ratio);
+	distSize = Size(this->bbox.width / frame_ratio, this->bbox.height / frame_ratio);
 	this->bbox= Rect(Center(bbox) - Point((this->bbox.width + distSize.width) / 2, (this->bbox.height + distSize.height) / 2),
 			 Center(bbox) + Point((this->bbox.width + distSize.width) / 2, (this->bbox.height + distSize.height) / 2)); // get new object square position to calc size
 	grayROI = grayFrame(this->bbox); // ROI with new position but old size 
@@ -122,5 +123,5 @@ recT scaleBox<recT>::updateSize(Mat grayFrame, recT bbox)
 	foregroundHistProb(grayROI, distSize, back_hist_old, probmap);
 
 	Size nSize = momentSize(probmap); 	// moment calc
-	return Rescale(this->bbox, baseSize, nSize, grayFrame.size(), frame_ratio); // rescale with moment
+	return Rescale<recT>(this->bbox, baseSize, nSize, grayFrame.size(), frame_ratio); // rescale with moment
 }

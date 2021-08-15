@@ -2,6 +2,10 @@
 #include <opencv2/dnn.hpp>
 #include "common.hpp"
 
+#ifdef CV_CXX11
+#include <thread>
+#endif
+
 using namespace dnn;
 
 struct model_param
@@ -79,15 +83,19 @@ class model
 					putText(frame, label, Point(box.x, box.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar());
 					
 				}
-				waitKey(1000);
 				putText(frame, "hedeflerden bir tanesini secin", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 255, 10), 2);
 				imshow("detections", frame);
 				
+				waitKey(500);
 				int keyboard = -1;
+				/*
 				while (keyboard < 0)
 					keyboard = waitKey(10);	
 				keyboard = (int)(keyboard - 48);
-				CV_Assert(keyboard > 0);
+				CV_Assert(keyboard > -1);
+				*/
+				cout << "give a number:";
+				cin >> keyboard;
 
 				bbox = this->boxes.at(keyboard);
 				confidence = this->confidences.at(keyboard);
@@ -103,6 +111,7 @@ class model
 			{
 				putText(frame, "hedef bulunamadi", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 0, 255), 2);
 				imshow("detections", frame);
+				waitKey(10000);
 				return 0;
 			}
 			return confidence;

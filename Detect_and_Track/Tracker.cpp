@@ -14,7 +14,7 @@ using namespace std;
 
 #define val 4
 #define frame_ratio 15 // iç boxun ROI ye oraný
-#define min_box_size 30
+#define min_box_size 64
 
 #include "model.hpp"
 #include "track_utils.hpp"
@@ -111,7 +111,7 @@ int main(int argc, char** argv)
 
 	cout << cv::getBuildInformation << endl; // get build inf - contrib is installed ?
 
-	Mat frame, grayFrame; // frame storages
+	Mat frame, t_frame; // frame storages
 	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
 	
 	bool track_or_detect = false; 
@@ -119,12 +119,13 @@ int main(int argc, char** argv)
 	{
 		if (mode)
 		{
+			double timer = (double)getTickCount(); // start FPS timer
 			if (!video.read(frame)) // frame read control
 				break; // if frame error occurs
-			
-			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
-			cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
-			
+			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 	
+			//cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
+			t_frame = frame.clone();
+
 			if (!track_or_detect) // detection mode
 			{
 				// get bbox from model...
@@ -141,30 +142,28 @@ int main(int argc, char** argv)
 				win_size_h *= scale_h;
 				win_size_w *= scale_w;
 
-				resize(grayFrame, grayFrame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC);
+				resize(t_frame, t_frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC);
 				bbox = Rect(bbox.x * scale_w - ext_size, bbox.y * scale_h-ext_size, bbox.width * scale_w+2*ext_size, bbox.height * scale_h+2*ext_size);
 				
-				scbox.init(grayFrame, bbox);
-				tracker->init(grayFrame, bbox); // initialize tracker
-				rectangle(grayFrame, bbox,Scalar(0,250,0));
-				imshow("resized frame",grayFrame);
+				scbox.init(t_frame, bbox);
+				tracker->init(t_frame, bbox); // initialize tracker
+				//rectangle(t_frame, bbox,Scalar(0,250,0));
+				//imshow("resized frame",t_frame);
 				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
 			}
 			else // tracking 
 			{ 
-				double timer = (double)getTickCount(); // start FPS timer
-				bool check = tracker->update(grayFrame, bbox); // MOSSE initiated
-				rectangle(grayFrame, bbox, Scalar(0, 250, 0));
-				imshow("resized frame", grayFrame);
-				if (check) // tracking check
+				//rectangle(t_frame, bbox, Scalar(0, 250, 0));
+				//imshow("resized frame", grayFrame);
+				if (tracker->update(t_frame, bbox)) // tracking check
 				{
-					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
-					
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
-					exp_bbox = bbox; // scbox->updateSize(grayFrame, bbox);
+					exp_bbox = bbox; 
+					//scbox.updateSize(t_frame, bbox);
 
 					resize(frame, frame, Size(win_size_w/scale_w, win_size_h/scale_h), 0.0, 0.0, INTER_CUBIC);
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
+					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 				}
 				else
@@ -174,6 +173,8 @@ int main(int argc, char** argv)
 					putText(frame, "Tracking lost...", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 50, 200), 2);
 					win_size_h = parser.get<int>("height");
 					win_size_w = parser.get<int>("width");
+					tracker->clear();
+					tracker = TrackerMOSSE::create();
 					track_or_detect = false; // return to the detection mode ...
 				}
 			}
@@ -182,7 +183,7 @@ int main(int argc, char** argv)
 		rectangle(frame, exp_bbox, Scalar(255, 0, 0), 2, 1);
 		imshow(winname, frame);// show final result ...
 		moveWindow(winname,50,50);
-		waitKey(0); // to move frame by frame -- REMOVE BEFORE FLIGHT !!!
+		//waitKey(0); // to move frame by frame -- REMOVE BEFORE FLIGHT !!!
 
 		int keyboard = waitKey(5); // kullanýcýdan kontrol tuþu al 
 		if (keyboard == 'q' || keyboard == 27) // quit
