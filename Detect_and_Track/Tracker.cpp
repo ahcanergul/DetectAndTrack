@@ -309,6 +309,7 @@ int main(int argc, char** argv)
 					win_size_h = parser.get<int>("height");
 					win_size_w = parser.get<int>("width");
 					track_or_detect = false; // return to the detection mode ...
+					cout << "yeni";
 				}
 			}
 		}
