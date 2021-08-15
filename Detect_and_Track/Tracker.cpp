@@ -1,11 +1,11 @@
-#include <iostream>
+﻿#include <iostream>
 #include <fstream>
 #include <sstream>
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
-#include <opencv2/tracking.hpp> // contrib y�klenmeli !!!
+#include <opencv2/tracking.hpp> // contrib yüklenmeli !!!
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/gapi/core.hpp> // GPU API library
 
@@ -13,8 +13,115 @@ using namespace cv;
 using namespace std; 
 
 #define val 4
-#define frame_ratio 15 // i� boxun ROI ye oran�
+#define frame_ratio 15 // iç boxun ROI ye oraný
 #define min_box_size 30
+
+#define PID_KP  2.0f
+#define PID_KI  0.5f
+#define PID_KD  0.25f
+
+#define PID_TAU 0.02f
+
+#define PID_LIM_MIN   -1000.0f
+#define PID_LIM_MAX   1000.0f
+
+#define PID_LIM_MIN_T   0.0f
+#define PID_LIM_MAX_T   1000.0f
+
+#define PID_LIM_MIN_INT -5.0f
+#define PID_LIM_MAX_INT  5.0f
+
+#define SAMPLE_TIME_S 0.01f
+
+typedef struct {
+
+	/* Controller gains */
+	float Kp;
+	float Ki;
+	float Kd;
+
+	/* Derivative low-pass filter time constant */
+	float tau;
+
+	/* Output limits */
+	float limMin;
+	float limMax;
+
+	/* Integrator limits */
+	float limMinInt;
+	float limMaxInt;
+
+	/* Sample time (in seconds) */
+	float T;
+
+	/* Controller "memory" */
+	float integrator;
+	float prevError;			/* Required for integrator */
+	float differentiator;
+	float prevMeasurement;		/* Required for differentiator */
+
+	/* Controller output */
+	float out;
+
+} PID;
+
+float PID_update(PID* pid, float setpoint, float measurement) {
+
+	float error = setpoint - measurement;
+
+	/*
+	* Proportional
+	*/
+	float proportional = pid->Kp * error;
+
+	/*
+	* Integral
+	*/
+	pid->integrator = pid->integrator + 0.5f * pid->Ki * pid->T * (error + pid->prevError);
+
+	/* Anti-wind-up via integrator clamping */
+	if (pid->integrator > pid->limMaxInt) {
+		pid->integrator = pid->limMaxInt;
+	}
+	else if (pid->integrator < pid->limMinInt) {
+		pid->integrator = pid->limMinInt;
+	}
+
+	/*
+	* Derivative (band-limited differentiator)
+	*/
+
+	pid->differentiator = -(2.0f * pid->Kd * (measurement - pid->prevMeasurement)	/* Note: derivative on measurement, therefore minus sign in front of equation! */
+		+ (2.0f * pid->tau - pid->T) * pid->differentiator)
+		/ (2.0f * pid->tau + pid->T);
+
+	/*
+	* Compute output and apply limits
+	*/
+	pid->out = proportional + pid->integrator + pid->differentiator;
+
+	if (pid->out > pid->limMax) {
+		pid->out = pid->limMax;
+	}
+	else if (pid->out < pid->limMin) {
+		pid->out = pid->limMin;
+	}
+
+	/* Store error and measurement for later use */
+	pid->prevError = error;
+	pid->prevMeasurement = measurement;
+
+	/* Return controller output */
+	return pid->out;
+}
+
+void PID_init(PID* pid) {
+	pid->integrator = 0.0f;
+	pid->prevError = 0.0f;
+	pid->differentiator = 0.0f;
+	pid->prevMeasurement = 0.0f;
+	pid->out = 0.0f;
+}
 
 #include "model.hpp"
 #include "track_utils.hpp"
@@ -23,7 +130,7 @@ static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 1; // player modes --> play - 1 : stop - 0   || tu�lar:  esc --> ��k , p --> pause , r--> return  
+int mode = 1; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
 int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
@@ -81,6 +188,12 @@ int main(int argc, char** argv)
 	win_size_w = parser.get<int>("width");
 	yolov4.inpHeigth = win_size_h;
 	yolov4.inpWidth = win_size_w;
+
+	PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN, 
+		                  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
+
+	PID_init(&manouver_control);
+
 	if (parser.has("classes"))
 		yolov4.get_classes(parser.get<string>("classes"));
 	
@@ -122,7 +235,7 @@ int main(int argc, char** argv)
 			if (!video.read(frame)) // frame read control
 				break; // if frame error occurs
 			
-			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 
+			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
 			cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
 			
 			if (!track_or_detect) // detection mode
@@ -158,14 +271,35 @@ int main(int argc, char** argv)
 				imshow("resized frame", grayFrame);
 				if (check) // tracking check
 				{
-					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayac� al
+					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
 					
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
 					exp_bbox = bbox; // scbox->updateSize(grayFrame, bbox);
 
+					int center_x = win_size_w / scale_w / 2;
+					int center_y = win_size_h / scale_h / 2;
+
+					Point center_box = Center(bbox);
+					
+					signed int error_x = center_x - center_box.x; // -x error sağa yani + x yönüne git
+					signed int error_y = center_y - center_box.y; // +x error sola yani - x yönüne git
+					                                              // -y error aşağı yani - y yönüne git
+					                                              // +y error yukarı yani + y yönüne git
+					
+					float speed_x = PID_update(&manouver_control, center_box.x, center_x);
+					float speed_y = PID_update(&manouver_control, center_box.y, center_y);
+
+					cout << "x_cmd" << " " << speed_x;
+					cout << "y_cmd" << " " << speed_y;
+					
 					resize(frame, frame, Size(win_size_w/scale_w, win_size_h/scale_h), 0.0, 0.0, INTER_CUBIC);
-					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
+					drawMarker(frame, Center(bbox), Scalar(0, 255, 255)); //mark the center 
+					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
+
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "x_cmd : " + SSTR(float(speed_x)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "y_cmd : " + SSTR(float(speed_y)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+
 				}
 				else
 				{
@@ -184,7 +318,7 @@ int main(int argc, char** argv)
 		moveWindow(winname,50,50);
 		waitKey(0); // to move frame by frame -- REMOVE BEFORE FLIGHT !!!
 
-		int keyboard = waitKey(5); // kullan�c�dan kontrol tu�u al 
+		int keyboard = waitKey(5); // kullanýcýdan kontrol tuþu al 
 		if (keyboard == 'q' || keyboard == 27) // quit
 			break;
 		else if (keyboard == 'p' || keyboard == 112) // pause
