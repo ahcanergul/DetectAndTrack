@@ -331,6 +331,7 @@ int main(int argc, char** argv)
 					tracker->clear();
 					tracker = TrackerMOSSE::create();
 					track_or_detect = false; // return to the detection mode ...
+					cout << "yeni";
 				}
 			}
 		}
