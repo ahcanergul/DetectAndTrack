@@ -13,13 +13,11 @@ using namespace cv;
 using namespace std; 
 
 #define val 4
-<<<<<<< HEAD
 #define frame_ratio 15 // i� boxun ROI ye oran�
 #define min_box_size 64
-=======
+
 #define frame_ratio 15 // iç boxun ROI ye oraný
 #define min_box_size 30
->>>>>>> 04194127d87a8ad7e7ebf14a50036f67a545eb37
 
 #define PID_KP  2.0f
 #define PID_KI  0.5f
@@ -240,17 +238,15 @@ int main(int argc, char** argv)
 			double timer = (double)getTickCount(); // start FPS timer
 			if (!video.read(frame)) // frame read control
 				break; // if frame error occurs
-<<<<<<< HEAD
+
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 	
 			//cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
 			t_frame = frame.clone();
 
-=======
 			
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
-			cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
+		//	cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
 			
->>>>>>> 04194127d87a8ad7e7ebf14a50036f67a545eb37
 			if (!track_or_detect) // detection mode
 			{
 				// get bbox from model...
@@ -282,11 +278,8 @@ int main(int argc, char** argv)
 				//imshow("resized frame", grayFrame);
 				if (tracker->update(t_frame, bbox)) // tracking check
 				{
-<<<<<<< HEAD
-=======
 					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
 					
->>>>>>> 04194127d87a8ad7e7ebf14a50036f67a545eb37
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
 					exp_bbox = bbox; 
 					//scbox.updateSize(t_frame, bbox);
@@ -308,14 +301,13 @@ int main(int argc, char** argv)
 					cout << "y_cmd" << " " << speed_y;
 					
 					resize(frame, frame, Size(win_size_w/scale_w, win_size_h/scale_h), 0.0, 0.0, INTER_CUBIC);
-<<<<<<< HEAD
+
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
 					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayac� al
-=======
+
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 255)); //mark the center 
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
 
->>>>>>> 04194127d87a8ad7e7ebf14a50036f67a545eb37
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 					putText(frame, "x_cmd : " + SSTR(float(speed_x)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 					putText(frame, "y_cmd : " + SSTR(float(speed_y)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
