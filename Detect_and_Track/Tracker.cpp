@@ -303,7 +303,6 @@ int main(int argc, char** argv)
 					resize(frame, frame, Size(win_size_w/scale_w, win_size_h/scale_h), 0.0, 0.0, INTER_CUBIC);
 
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
-					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayac� al
 
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 255)); //mark the center 
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
