@@ -2,15 +2,31 @@
 #include <fstream>
 #include <sstream>
 
+#include <chrono>
+#include <cmath>
+#include <future>
+#include <iostream>
+#include <thread>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/tracking.hpp> // contrib yüklenmeli !!!
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/gapi/core.hpp> // GPU API library
+#include <mavsdk.h>
+#include <plugins/action/action.h>
+#include <plugins/offboard/offboard.h>
+#include <plugins/telemetry/telemetry.h>
+
+using namespace mavsdk;
+
+Mavsdk mavsdk;
+using std::chrono::milliseconds;
+using std::chrono::seconds;
+using std::this_thread::sleep_for;
 
 using namespace cv;
-using namespace std; 
+using namespace std;
 
 #define val 4
 #define frame_ratio 15 // i� boxun ROI ye oran�
@@ -126,8 +142,40 @@ void PID_init(PID* pid) {
 	pid->out = 0.0f;
 }
 
+std::shared_ptr<System> get_system(Mavsdk& mavsdk)
+{
+	std::cout << "Waiting to discover system...\n";
+	auto prom = std::promise<std::shared_ptr<System>>{};
+	auto fut = prom.get_future();
+
+	// We wait for new systems to be discovered, once we find one that has an
+	// autopilot, we decide to use it.
+	mavsdk.subscribe_on_new_system([&mavsdk, &prom]() {
+		auto system = mavsdk.systems().back();
+
+		if (system->has_autopilot()) {
+			std::cout << "Discovered autopilot\n";
+
+			// Unsubscribe again as we only want to find one system.
+			mavsdk.subscribe_on_new_system(nullptr);
+			prom.set_value(system);
+		}
+		});
+
+	// We usually receive heartbeats at 1Hz, therefore we should find a
+	// system after around 3 seconds max, surely.
+	if (fut.wait_for(seconds(3)) == std::future_status::timeout) {
+		std::cerr << "No autopilot found.\n";
+		return {};
+	}
+
+	// Get discovered system now.
+	return fut.get();
+}
+
 #include "model.hpp"
 #include "track_utils.hpp"
+#include <future>
 
 static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
@@ -177,10 +225,10 @@ int main(int argc, char** argv)
 	CV_Assert(parser.has("model"));
 	std::string modelPath = findFile(parser.get<String>("model"));
 	std::string configPath = findFile(parser.get<String>("config"));
-	
+
 	// model object definitons
-	model_param param = {modelName, modelPath, configPath, parser.get<String>("framework"), parser.get<int>("backend"), 
-						parser.get<int>("target"), parser.get<int>("async")};
+	model_param param = { modelName, modelPath, configPath, parser.get<String>("framework"), parser.get<int>("backend"),
+						parser.get<int>("target"), parser.get<int>("async") };
 	model yolov4(param);
 	yolov4.confThreshold = parser.get<float>("thr");
 	yolov4.nmsThreshold = parser.get<float>("nms");
@@ -192,16 +240,16 @@ int main(int argc, char** argv)
 	yolov4.inpHeigth = win_size_h;
 	yolov4.inpWidth = win_size_w;
 
-	PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN, 
-		                  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
+	PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
+						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
 
 	PID_init(&manouver_control);
 
 	if (parser.has("classes"))
 		yolov4.get_classes(parser.get<string>("classes"));
-	
+
 	string filename;
-	if(parser.has("input"))
+	if (parser.has("input"))
 		filename = parser.get<String>("input");
 
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
@@ -229,8 +277,63 @@ int main(int argc, char** argv)
 
 	Mat frame, t_frame; // frame storages
 	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-	
-	bool track_or_detect = false; 
+
+	bool track_or_detect = false;
+
+	ConnectionResult connection_result = mavsdk.add_any_connection(argv[1]); //SITL simülasyona bağlanılır
+
+	if (connection_result != ConnectionResult::Success) {
+		std::cerr << "Connection failed: " << connection_result << '\n';
+		return 1;
+	}
+
+	auto system = get_system(mavsdk);
+	if (!system) {
+		return 1;
+	}
+
+	// Instantiate plugins.
+	auto action = Action{ system };
+	auto offboard = Offboard{ system };
+	auto telemetry = Telemetry{ system };
+
+	while (!telemetry.health_all_ok()) {
+		std::cout << "Waiting for system to be ready\n";
+		sleep_for(seconds(1));
+	}
+	std::cout << "System is ready\n";
+
+	const auto arm_result = action.arm();
+	if (arm_result != Action::Result::Success) {
+		std::cerr << "Arming failed: " << arm_result << '\n';
+		return 1;
+	}
+	std::cout << "Armed\n";
+
+	const auto takeoff_result = action.takeoff();
+	if (takeoff_result != Action::Result::Success) {
+		std::cerr << "Takeoff failed: " << takeoff_result << '\n';
+		return 1;
+	}
+
+	auto in_air_promise = std::promise<void>{};
+	auto in_air_future = in_air_promise.get_future();
+	telemetry.subscribe_landed_state([&telemetry, &in_air_promise](Telemetry::LandedState state) {
+		if (state == Telemetry::LandedState::InAir) {
+			std::cout << "Taking off has finished\n.";
+			telemetry.subscribe_landed_state(nullptr);
+			in_air_promise.set_value();
+		}
+		});
+
+	in_air_future.wait_for(seconds(10));
+
+	if (in_air_future.wait_for(seconds(3)) == std::future_status::timeout) {
+		std::cerr << "Takeoff timed out.\n";
+		return 1;
+	}
+
+
 	while (true)
 	{
 		if (mode)
@@ -243,17 +346,17 @@ int main(int argc, char** argv)
 			//cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
 			t_frame = frame.clone();
 
-			
+
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
 		//	cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
-			
+
 			if (!track_or_detect) // detection mode
 			{
 				// get bbox from model...
 				float confidence = yolov4.getObject<Rect2d>(frame, bbox);
 				CV_Assert(confidence > 0);
 				cout << "model initiated..." << endl;
-				
+
 				//grayROI = selectROI(frame); // manuel select 
 				exp_bbox = bbox; // stored original box in printable exp_bbox
 				scale_h = min_box_size / bbox.height; // calculated scale to adjust frame according to predefined size 
@@ -264,8 +367,8 @@ int main(int argc, char** argv)
 				win_size_w *= scale_w;
 
 				resize(t_frame, t_frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC);
-				bbox = Rect(bbox.x * scale_w - ext_size, bbox.y * scale_h-ext_size, bbox.width * scale_w+2*ext_size, bbox.height * scale_h+2*ext_size);
-				
+				bbox = Rect(bbox.x * scale_w - ext_size, bbox.y * scale_h - ext_size, bbox.width * scale_w + 2 * ext_size, bbox.height * scale_h + 2 * ext_size);
+
 				scbox.init(t_frame, bbox);
 				tracker->init(t_frame, bbox); // initialize tracker
 				//rectangle(t_frame, bbox,Scalar(0,250,0));
@@ -273,34 +376,34 @@ int main(int argc, char** argv)
 				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
 			}
 			else // tracking 
-			{ 
+			{
 				//rectangle(t_frame, bbox, Scalar(0, 250, 0));
 				//imshow("resized frame", grayFrame);
 				if (tracker->update(t_frame, bbox)) // tracking check
 				{
 					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
-					
+
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
-					exp_bbox = bbox; 
+					exp_bbox = bbox;
 					//scbox.updateSize(t_frame, bbox);
 
 					int center_x = win_size_w / scale_w / 2;
 					int center_y = win_size_h / scale_h / 2;
 
 					Point center_box = Center(bbox);
-					
+
 					signed int error_x = center_x - center_box.x; // -x error sağa yani + x yönüne git
 					signed int error_y = center_y - center_box.y; // +x error sola yani - x yönüne git
-					                                              // -y error aşağı yani - y yönüne git
-					                                              // +y error yukarı yani + y yönüne git
-					
+																  // -y error aşağı yani - y yönüne git
+																  // +y error yukarı yani + y yönüne git
+
 					float speed_x = PID_update(&manouver_control, center_box.x, center_x);
 					float speed_y = PID_update(&manouver_control, center_box.y, center_y);
 
 					cout << "x_cmd" << " " << speed_x;
 					cout << "y_cmd" << " " << speed_y;
-					
-					resize(frame, frame, Size(win_size_w/scale_w, win_size_h/scale_h), 0.0, 0.0, INTER_CUBIC);
+
+					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
 
@@ -315,7 +418,7 @@ int main(int argc, char** argv)
 				else
 				{
 					// Tracking failure detected.
-					resize(frame, frame, Size(win_size_w/scale_w, win_size_h/scale_h), 0.0, 0.0, INTER_CUBIC);
+					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 					putText(frame, "Tracking lost...", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 50, 200), 2);
 					win_size_h = parser.get<int>("height");
 					win_size_w = parser.get<int>("width");
@@ -329,7 +432,7 @@ int main(int argc, char** argv)
 
 		rectangle(frame, exp_bbox, Scalar(255, 0, 0), 2, 1);
 		imshow(winname, frame);// show final result ...
-		moveWindow(winname,50,50);
+		moveWindow(winname, 50, 50);
 		//waitKey(0); // to move frame by frame -- REMOVE BEFORE FLIGHT !!!
 
 		int keyboard = waitKey(5); // kullanýcýdan kontrol tuþu al 
