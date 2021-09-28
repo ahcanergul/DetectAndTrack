@@ -7,26 +7,29 @@
 #include <future>
 #include <iostream>
 #include <thread>
+#include <math.h>   
+
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/tracking.hpp> // contrib yüklenmeli !!!
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/gapi/core.hpp> // GPU API library
+
 #include <mavsdk.h>
 #include <plugins/action/action.h>
 #include <plugins/offboard/offboard.h>
 #include <plugins/telemetry/telemetry.h>
 
-using namespace mavsdk;
 
-Mavsdk mavsdk;
 using std::chrono::milliseconds;
 using std::chrono::seconds;
 using std::this_thread::sleep_for;
 
 using namespace cv;
 using namespace std;
+using namespace mavsdk;
+
 
 #define val 4
 #define frame_ratio 15 // i� boxun ROI ye oran�
@@ -83,6 +86,38 @@ typedef struct {
 	float out;
 
 } PID;
+
+std::shared_ptr<System> get_system(Mavsdk& mavsdk)
+{
+	std::cout << "Waiting to discover system...\n";
+	auto prom = std::promise<std::shared_ptr<System>>{};
+	auto fut = prom.get_future();
+
+	// We wait for new systems to be discovered, once we find one that has an
+	// autopilot, we decide to use it.
+	mavsdk.subscribe_on_new_system([&mavsdk, &prom]() {
+		auto system = mavsdk.systems().back();
+
+		if (system->has_autopilot()) {
+			std::cout << "Discovered autopilot\n";
+
+			// Unsubscribe again as we only want to find one system.
+			mavsdk.subscribe_on_new_system(nullptr);
+			prom.set_value(system);
+		}
+		});
+
+	// We usually receive heartbeats at 1Hz, therefore we should find a
+	// system after around 3 seconds max, surely.
+	if (fut.wait_for(seconds(3)) == std::future_status::timeout) {
+		std::cerr << "No autopilot found.\n";
+		return {};
+	}
+
+	// Get discovered system now.
+	return fut.get();
+}
+
 
 float PID_update(PID* pid, float setpoint, float measurement) {
 
@@ -142,36 +177,7 @@ void PID_init(PID* pid) {
 	pid->out = 0.0f;
 }
 
-std::shared_ptr<System> get_system(Mavsdk& mavsdk)
-{
-	std::cout << "Waiting to discover system...\n";
-	auto prom = std::promise<std::shared_ptr<System>>{};
-	auto fut = prom.get_future();
 
-	// We wait for new systems to be discovered, once we find one that has an
-	// autopilot, we decide to use it.
-	mavsdk.subscribe_on_new_system([&mavsdk, &prom]() {
-		auto system = mavsdk.systems().back();
-
-		if (system->has_autopilot()) {
-			std::cout << "Discovered autopilot\n";
-
-			// Unsubscribe again as we only want to find one system.
-			mavsdk.subscribe_on_new_system(nullptr);
-			prom.set_value(system);
-		}
-		});
-
-	// We usually receive heartbeats at 1Hz, therefore we should find a
-	// system after around 3 seconds max, surely.
-	if (fut.wait_for(seconds(3)) == std::future_status::timeout) {
-		std::cerr << "No autopilot found.\n";
-		return {};
-	}
-
-	// Get discovered system now.
-	return fut.get();
-}
 
 #include "model.hpp"
 #include "track_utils.hpp"
@@ -245,6 +251,63 @@ int main(int argc, char** argv)
 
 	PID_init(&manouver_control);
 
+	//mavsdk ilklendirmeleri
+
+	Mavsdk mavsdk;
+
+	ConnectionResult connection_result = mavsdk.add_any_connection(argv[1]);
+
+	if (connection_result != ConnectionResult::Success) {
+		std::cerr << "Connection failed: " << connection_result << '\n';
+		return 1;
+	}
+
+	auto system = get_system(mavsdk);
+	if (!system) {
+		return 1;
+	}
+
+	auto action = Action{ system };
+	auto offboard = Offboard{ system };
+	auto telemetry = Telemetry{ system };
+
+	while (!telemetry.health_all_ok()) {
+		std::cout << "Waiting for system to be ready\n";
+		sleep_for(seconds(1));
+	}
+	std::cout << "System is ready\n";
+
+	const auto arm_result = action.arm();
+	if (arm_result != Action::Result::Success) {
+		std::cerr << "Arming failed: " << arm_result << '\n';
+		return 1;
+	}
+	std::cout << "Armed\n";
+
+	const auto takeoff_result = action.takeoff();
+	if (takeoff_result != Action::Result::Success) {
+		std::cerr << "Takeoff failed: " << takeoff_result << '\n';
+		return 1;
+	}
+
+	auto in_air_promise = std::promise<void>{};
+	auto in_air_future = in_air_promise.get_future();
+
+	telemetry.subscribe_landed_state([&telemetry, &in_air_promise](Telemetry::LandedState state) {
+		if (state == Telemetry::LandedState::InAir) {
+			std::cout << "Taking off has finished\n.";
+			telemetry.subscribe_landed_state(nullptr);
+			in_air_promise.set_value();
+		}
+		});
+
+	in_air_future.wait_for(seconds(10));
+	if (in_air_future.wait_for(seconds(3)) == std::future_status::timeout) {
+		std::cerr << "Takeoff timed out.\n";
+		return 1;
+	}
+
+
 	if (parser.has("classes"))
 		yolov4.get_classes(parser.get<string>("classes"));
 
@@ -280,60 +343,6 @@ int main(int argc, char** argv)
 
 	bool track_or_detect = false;
 
-	ConnectionResult connection_result = mavsdk.add_any_connection(argv[1]); //SITL simülasyona bağlanılır
-
-	if (connection_result != ConnectionResult::Success) {
-		std::cerr << "Connection failed: " << connection_result << '\n';
-		return 1;
-	}
-
-	auto system = get_system(mavsdk);
-	if (!system) {
-		return 1;
-	}
-
-	// Instantiate plugins.
-	auto action = Action{ system };
-	auto offboard = Offboard{ system };
-	auto telemetry = Telemetry{ system };
-
-	while (!telemetry.health_all_ok()) {
-		std::cout << "Waiting for system to be ready\n";
-		sleep_for(seconds(1));
-	}
-	std::cout << "System is ready\n";
-
-	const auto arm_result = action.arm();
-	if (arm_result != Action::Result::Success) {
-		std::cerr << "Arming failed: " << arm_result << '\n';
-		return 1;
-	}
-	std::cout << "Armed\n";
-
-	const auto takeoff_result = action.takeoff();
-	if (takeoff_result != Action::Result::Success) {
-		std::cerr << "Takeoff failed: " << takeoff_result << '\n';
-		return 1;
-	}
-
-	auto in_air_promise = std::promise<void>{};
-	auto in_air_future = in_air_promise.get_future();
-	telemetry.subscribe_landed_state([&telemetry, &in_air_promise](Telemetry::LandedState state) {
-		if (state == Telemetry::LandedState::InAir) {
-			std::cout << "Taking off has finished\n.";
-			telemetry.subscribe_landed_state(nullptr);
-			in_air_promise.set_value();
-		}
-		});
-
-	in_air_future.wait_for(seconds(10));
-
-	if (in_air_future.wait_for(seconds(3)) == std::future_status::timeout) {
-		std::cerr << "Takeoff timed out.\n";
-		return 1;
-	}
-
-
 	while (true)
 	{
 		if (mode)
@@ -348,7 +357,16 @@ int main(int argc, char** argv)
 
 
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
-		//	cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
+
+			// Send it once before starting offboard, otherwise it will be rejected.
+			Offboard::VelocityBodyYawspeed stay{};
+			offboard.set_velocity_body(stay);
+
+			Offboard::Result offboard_result = offboard.start();
+			if (offboard_result != Offboard::Result::Success) {
+				std::cerr << "Offboard start failed: " << offboard_result << '\n';
+				return false;
+			}
 
 			if (!track_or_detect) // detection mode
 			{
@@ -357,7 +375,7 @@ int main(int argc, char** argv)
 				CV_Assert(confidence > 0);
 				cout << "model initiated..." << endl;
 
-				//grayROI = selectROI(frame); // manuel select 
+ 
 				exp_bbox = bbox; // stored original box in printable exp_bbox
 				scale_h = min_box_size / bbox.height; // calculated scale to adjust frame according to predefined size 
 				scale_w = min_box_size / bbox.width;
@@ -371,9 +389,11 @@ int main(int argc, char** argv)
 
 				scbox.init(t_frame, bbox);
 				tracker->init(t_frame, bbox); // initialize tracker
-				//rectangle(t_frame, bbox,Scalar(0,250,0));
-				//imshow("resized frame",t_frame);
+
 				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
+
+
+
 			}
 			else // tracking 
 			{
@@ -395,13 +415,18 @@ int main(int argc, char** argv)
 					signed int error_x = center_x - center_box.x; // -x error sağa yani + x yönüne git
 					signed int error_y = center_y - center_box.y; // +x error sola yani - x yönüne git
 																  // -y error aşağı yani - y yönüne git
-																  // +y error yukarı yani + y yönüne git
+												                  // +y error yukarı yani + y yönüne git
+					
+					double error_theta = atan2(error_y, error_x); 
 
-					float speed_x = PID_update(&manouver_control, center_box.x, center_x);
-					float speed_y = PID_update(&manouver_control, center_box.y, center_y);
+					float speed_theta = PID_update(&manouver_control, 0, error_theta);
+					float speed_front = PID_update(&manouver_control, center_box.y, center_y);
+					float speed_right = PID_update(&manouver_control, center_box.x, center_x);
 
-					cout << "x_cmd" << " " << speed_x;
-					cout << "y_cmd" << " " << speed_y;
+					offboard.set_velocity_body({ speed_front, speed_right, 0.0f, speed_theta});
+
+					cout << "theta_cmd" << " " << speed_theta;
+					cout << "front_cmd" << " " << speed_front;
 
 					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 
@@ -411,8 +436,8 @@ int main(int argc, char** argv)
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
 
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "x_cmd : " + SSTR(float(speed_x)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "y_cmd : " + SSTR(float(speed_y)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "x_cmd : " + SSTR(float(speed_theta)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "y_cmd : " + SSTR(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 
 				}
 				else
@@ -443,5 +468,6 @@ int main(int argc, char** argv)
 		else if (keyboard == 'r' || keyboard == 114) // return
 			mode = 1;
 	}
+
 	return 0;
 }
