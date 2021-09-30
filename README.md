@@ -1,5 +1,4 @@
 # DetectAndTrack
-V1 --> proje oluşturuldu
 
 run.bat --> otomatik detection&tracking girdisi almak için 
 kullanım:
