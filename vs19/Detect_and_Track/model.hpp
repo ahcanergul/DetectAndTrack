@@ -15,8 +15,8 @@ struct model_param
 	string configPath;
 	string framework;
 	int backend;
-	int target; // hedef işlem arayüzü 
-	size_t asyncNumReq; // asenkron mode henüz kurulmadı !!! 
+	int target; // hedef iÃ¾lem arayÃ¼zÃ¼ 
+	size_t asyncNumReq; // asenkron mode henÃ¼z kurulmadÃ½ !!! 
 };
 
 
