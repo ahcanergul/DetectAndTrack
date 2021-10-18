@@ -1,5 +1,5 @@
 #pragma once
-//#define DEBUG1 // foreground histogram için debugging
+//#define DEBUG1 // foreground histogram iÃ§in debugging
 
 #define SSTR( x ) (static_cast< std::ostringstream >(( std::ostringstream() << std::dec << x ) ).str()) // number to string / itoa()
 #define Center( r ) (Point((r.x + r.width/2),(r.y + r.height/2))) // r rect merkezi
@@ -11,7 +11,7 @@ recT Rescale(recT bbox, Size oldSize, Size newSize, Size frame ,int frameRatio =
 	float h = newSize.height / oldSize.height;
 	Point center = Center(bbox);
 
-	w = MIN(MIN(w, 2 * center.x - w / frameRatio), 2 * (frame.width - center.x - w / frameRatio)) +1; // 0 boyuta inmemesi için en az 3 ile sınırladık
+	w = MIN(MIN(w, 2 * center.x - w / frameRatio), 2 * (frame.width - center.x - w / frameRatio)) +1; // 0 boyuta inmemesi iÃ§in en az 3 ile sÃ½nÃ½rladÃ½k
 	h = MIN(MIN(h, 2 * center.y - h / frameRatio), 2 * (frame.height - center.y - h / frameRatio)) +1;
 	return recT(center.x - w / 2, center.y - h / 2, w, h);
 }
@@ -36,7 +36,7 @@ class scaleBox
 {
 	public:
 		Size distSize, baseSize; // sizes getting from moments (new size / base size)
-		Mat back_hist_old = Mat(Size(1, 256), CV_32F, Scalar(0)); // TEST --> eski histogramı tutmak için
+		Mat back_hist_old = Mat(Size(1, 256), CV_32F, Scalar(0)); // TEST --> eski histogramÃ½ tutmak iÃ§in
 		recT bbox; // prev box
 
 		void init(Mat grayFrame, recT bbox);
@@ -50,8 +50,8 @@ class scaleBox
 
 /*
 --------------------- foregroundHistProb -------------------------
-	arkaplandaki pixel değerlerini boxun olasılığından çıkarıyoruz 
-	val: bir değerin histogramdan çıkarılması için gereken en az pixel sayısı  
+	arkaplandaki pixel deÃ°erlerini boxun olasÃ½lÃ½Ã°Ã½ndan Ã§Ã½karÃ½yoruz 
+	val: bir deÃ°erin histogramdan Ã§Ã½karÃ½lmasÃ½ iÃ§in gereken en az pixel sayÃ½sÃ½  
 */
 template <typename recT>
 void scaleBox<recT>::foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int value) 
@@ -65,18 +65,18 @@ void scaleBox<recT>::foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& p
 	int hist_size[] = { 256 };//bins = 256
 	int channels[] = { 0 };
 
-	calcHist(&in, 1, channels, 255 - mask, back_hist, 1, hist_size, ranges, true, false); //arkaplan histogramı
-	calcHist(&in, 1, channels, mask, fore_hist, 1, hist_size, ranges, true, false); // önplan histogramı
+	calcHist(&in, 1, channels, 255 - mask, back_hist, 1, hist_size, ranges, true, false); //arkaplan histogramÃ½
+	calcHist(&in, 1, channels, mask, fore_hist, 1, hist_size, ranges, true, false); // Ã¶nplan histogramÃ½
 
 
 	normalize(back_hist, back_hist, 0, 255, NORM_MINMAX, -1, Mat()); //normalize histograms
 	normalize(fore_hist, fore_hist, 0, 255, NORM_MINMAX, -1, Mat());
-	threshold(back_hist, back_hist, value, 255, THRESH_BINARY); // val == arkaplandan bir değerin alınma sınırı default 4 - 4 pixel veya az varsa alınabilir demek
-	hist = back_hist;// | hist; //--> TEST old histogramı da hesaba katarak daha iyi sonuc elde edebilir miyiz ?
+	threshold(back_hist, back_hist, value, 255, THRESH_BINARY); // val == arkaplandan bir deÃ°erin alÃ½nma sÃ½nÃ½rÃ½ default 4 - 4 pixel veya az varsa alÃ½nabilir demek
+	hist = back_hist;// | hist; //--> TEST old histogramÃ½ da hesaba katarak daha iyi sonuc elde edebilir miyiz ?
 	fore_hist = fore_hist & (255 - hist); // XOR(or substract) foreground with background
-	normalize(fore_hist, fore_hist, 0, 255, NORM_MINMAX, -1, Mat()); // değerleri normalize ediyoruz --> hatalı çıktı verebiliyor(teoride gerekli değil)  
+	normalize(fore_hist, fore_hist, 0, 255, NORM_MINMAX, -1, Mat()); // deÃ°erleri normalize ediyoruz --> hatalÃ½ Ã§Ã½ktÃ½ verebiliyor(teoride gerekli deÃ°il)  
 
-#ifdef DEBUG1 // histogramı görmek için çizim --> klasik opencv histogram çıktısının aynısı
+#ifdef DEBUG1 // histogramÃ½ gÃ¶rmek iÃ§in Ã§izim --> klasik opencv histogram Ã§Ã½ktÃ½sÃ½nÃ½n aynÃ½sÃ½
 	Mat histImage = Mat::zeros(600, 600, CV_8UC3);
 	int hist_w = 512, hist_h = 400;
 	int bin_w = cvRound((double)hist_w / 256);
@@ -93,9 +93,9 @@ void scaleBox<recT>::foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& p
 #endif
 
 	Mat out;
-	calcBackProject(&in, 1, channels, fore_hist, out, ranges); // sonuçtaki olasılık haritamız
-	threshold(out, probHist, 1, 255, THRESH_BINARY); // çıkış olasılıklarını 0 ve 1 olarak almak için thresh --> normal denenebilir fakat bu daha etkili sonuç verdi
-	imshow("prob Demo", probHist); // olasık haritası gösterimi
+	calcBackProject(&in, 1, channels, fore_hist, out, ranges); // sonuÃ§taki olasÃ½lÃ½k haritamÃ½z
+	threshold(out, probHist, 1, 255, THRESH_BINARY); // Ã§Ã½kÃ½Ã¾ olasÃ½lÃ½klarÃ½nÃ½ 0 ve 1 olarak almak iÃ§in thresh --> normal denenebilir fakat bu daha etkili sonuÃ§ verdi
+	imshow("prob Demo", probHist); // olasÃ½k haritasÃ½ gÃ¶sterimi
 }
 
 
