@@ -1,5 +1,4 @@
 # DetectAndTrack
-These files generated with visual studio (win10)
 
 run.bat --> otomatik detection&tracking girdisi almak için 
 kullanım:
