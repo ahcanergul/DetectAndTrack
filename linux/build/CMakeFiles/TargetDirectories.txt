@@ -1,0 +1,3 @@
+/home/caner/px4/MAVSDK/DetectAndTrack/build/CMakeFiles/rebuild_cache.dir
+/home/caner/px4/MAVSDK/DetectAndTrack/build/CMakeFiles/edit_cache.dir
+/home/caner/px4/MAVSDK/DetectAndTrack/build/CMakeFiles/DetectAndTrack.dir
