@@ -21,6 +21,8 @@
 #include <plugins/offboard/offboard.h>
 #include <plugins/telemetry/telemetry.h>
 
+#define bypass_model
+
 using namespace cv;
 using namespace std;
 using namespace mavsdk;
@@ -369,6 +371,11 @@ int main(int argc, char** argv)
 			{
 				offboard.set_velocity_body(stay);// dur - ara // senaryoya göre değişebilir...
 				// get bbox from model...
+				#ifdef bypassmodel
+					bbox = selectROI(t_frame);
+					track_or_detect=true;
+					continue;
+				#endif
 				float confidence = yolov4.getObject<Rect2d>(frame, bbox);
 				CV_Assert(confidence > 0);
 				cout << "model initiated..." << endl;
