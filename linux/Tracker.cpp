@@ -17,6 +17,7 @@
 #include <opencv2/gapi/core.hpp> // GPU API library
 
 #include <mavsdk.h>
+#include <mavsdk/plugins/gimbal/gimbal.h>
 #include <plugins/action/action.h>
 #include <plugins/offboard/offboard.h>
 #include <plugins/telemetry/telemetry.h>
@@ -35,14 +36,18 @@ using std::this_thread::sleep_for;
 #define frame_ratio 15 // i� boxun ROI ye oran�
 #define min_box_size 64
 
-#define PID_KP  1.0f
-#define PID_KI  0.5f
-#define PID_KD  0.25f
+#define PID_KP  0.0009f
+#define PID_KI  0.0f
+#define PID_KD  0.0f
+
+#define PID_KP_ANG  15.0f
+#define PID_KI_ANG  0.0f
+#define PID_KD_ANG  0.0f
 
 #define PID_TAU 0.02f
 
-#define PID_LIM_MIN   -1000.0f
-#define PID_LIM_MAX   1000.0f
+#define PID_LIM_MIN   -100.0f
+#define PID_LIM_MAX   100.0f
 
 #define PID_LIM_MIN_T   0.0f
 #define PID_LIM_MAX_T   1000.0f
@@ -51,6 +56,8 @@ using std::this_thread::sleep_for;
 #define PID_LIM_MAX_INT  5.0f
 
 #define SAMPLE_TIME_S 0.01f
+
+#define PI 3.14159265
 
 #include "model.hpp"
 #include "track_utils.hpp"
@@ -182,7 +189,7 @@ static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 1; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
+int mode = 3; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
 int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
@@ -243,12 +250,23 @@ int main(int argc, char** argv)
 
 	PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
+	
+	PID angle_control = { PID_KP_ANG, PID_KI_ANG, PID_KD_ANG, PID_TAU,PID_LIM_MIN,
+						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
+
+						  
 
 	PID_init(&manouver_control);
+	PID_init(&angle_control);
 
 	//mavsdk ilklendirmeleri
 
 	Mavsdk mavsdk;
+
+	Mat frame, t_frame; // frame storages
+	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
+
+	bool track_or_detect = false;
 
 	ConnectionResult connection_result = mavsdk.add_any_connection("udp://:14540");
 
@@ -265,6 +283,8 @@ int main(int argc, char** argv)
 	auto action = Action{ system };
 	auto offboard = Offboard{ system };
 	auto telemetry = Telemetry{ system };
+	auto gimbal = Gimbal{system};
+
 
            
 	while (!telemetry.health_all_ok()) {
@@ -279,6 +299,8 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	std::cout << "Armed\n";
+
+	action.set_takeoff_altitude(10.0);
 
 	const auto takeoff_result = action.takeoff();
 	if (takeoff_result != Action::Result::Success) {
@@ -297,7 +319,39 @@ int main(int argc, char** argv)
 		}
 		});
 
-	sleep_for(seconds(10));
+	float target_alt=10;
+	float current_position=0;
+
+	while (current_position<target_alt) {
+    	current_position = telemetry.position().relative_altitude_m;
+    	std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+
+
+	/*
+	std::cout << "Start controlling gimbal...\n";
+    Gimbal::Result gimbal_result = gimbal.take_control(Gimbal::ControlMode::Primary);
+    if (gimbal_result != Gimbal::Result::Success) {
+        std::cerr << "Could not take gimbal control: " << gimbal_result << '\n';
+        return 1;
+    }
+
+    std::cout << "Set yaw mode to lock to a specific direction...\n";
+    gimbal_result = gimbal.set_mode(Gimbal::GimbalMode::YawFollow);
+    if (gimbal_result != Gimbal::Result::Success) {
+        std::cerr << "Could not set to lock mode: " << gimbal_result << '\n';
+        return 1;
+    }
+	
+	gimbal.set_pitch_and_yaw(-90.0f, 0.0f);
+	*/
+	
+	VideoCapture video;
+	video = VideoCapture("udpsrc port=5600 ! application/x-rtp, media=video,clock-rate=90000, encoding-name=H264, payload=96 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink", CAP_GSTREAMER);
+
+
+
+
     Offboard::VelocityBodyYawspeed stay{};
     offboard.set_velocity_body(stay);
 
@@ -319,42 +373,60 @@ int main(int argc, char** argv)
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
 	scaleBox<Rect2d> scbox;
 
-	VideoCapture video;
+	
+
+
+
+	//VideoCapture video;
+	//video = VideoCapture("udpsrc port=5600 ! application/x-rtp, media=video,clock-rate=90000, encoding-name=H264, payload=96 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink", CAP_GSTREAMER);
+
+
+	// DOSYADAN OKUMA YAPACAKSAN KULLAN !!!!
+	/*
 	if (!filename.empty())
 	{
-		video.open(filename);
+		//video.open("udp://127.0.0.1:5600");
 		video.set(CAP_PROP_FRAME_WIDTH, win_size_w); // resize the screen
 		video.set(CAP_PROP_FRAME_HEIGHT, win_size_h);
 		cout << "file founded!!!" << endl;
 	}
 	else
-		{
-			video = VideoCapture("udpsrc port=5600 ! application/x-rtp, payload=26,clock-rate=90000, encoding-name=H264 ! rtpjitterbuffer mode=1 ! rtph264depay ! h264parse ! decodebin ! videoconvert ! appsink", CAP_GSTREAMER);
-		}
+		video.open(0);
 	// Exit if video is not opened
 	if (!video.isOpened())
 	{
-		cout << "Could not read video file: " << video.getBackendName() << endl;
+		cout << "Could not read video file" << endl;
 		waitKey(10);
 		return 1;
 	}
+	*/
 
 	cout << cv::getBuildInformation << endl; // get build inf - contrib is installed ?
 
-	Mat frame, t_frame; // frame storages
-	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-
-	video.read(frame);
-	imshow("test",frame);
-	bool track_or_detect = false;
+	//Mat frame, t_frame; // frame storages
+	//Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
+	//bool track_or_detect = false;
 
 	while (true)
 	{
-		if (mode)
+
+		if(video.read(frame)&mode==3){
+			imshow(winname, frame);
+		}
+
+		int key = waitKey(5);
+
+		if(key == 'd'){
+			mode = 1;
+		}
+
+
+		
+		if (mode==1)
 		{
 			double timer = (double)getTickCount(); // start FPS timer
-			if (!video.read(frame)) // frame read control
-				break; // if frame error occurs
+			//if (!video.read(frame)) // frame read control
+				//break; // if frame error occurs
 
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 	
 			//cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
@@ -411,33 +483,57 @@ int main(int argc, char** argv)
 					signed int error_y = center_y - center_box.y; // +x error sola yani - x yönüne git
 																  // -y error aşağı yani - y yönüne git
 												                  // +y error yukarı yani + y yönüne git
-					
-					double error_theta = atan2(error_y, error_x); 
 
-					float speed_theta = PID_update(&manouver_control, 0, error_theta);
-					float speed_front = PID_update(&manouver_control, center_box.y, center_y);
-					float speed_right = PID_update(&manouver_control, center_box.x, center_x);
+					double error_theta = 0;
 					Offboard::VelocityBodyYawspeed vec{};
-					vec.down_m_s=0.0f;
+
+					if((center_box.x-center_x) < 0){
+						error_theta = 270 - (atan((center_box.y-center_y)/(center_box.x-center_x)) * 180 / PI);
+					}
+					else{
+						error_theta = 90 + (atan((center_box.y-center_y)/(center_box.x-center_x)) * 180 / PI);
+					}
+					//double error_theta = atan(error_y/error_x) * 180 / PI; 
+
+					if(error_theta > 180){
+						error_theta = -(error_theta - 180);
+						float speed_theta = PID_update(&angle_control, error_theta, 0);
+						//vec.yawspeed_deg_s=-speed_theta;
+					}
+					else{
+						float speed_theta = PID_update(&angle_control, error_theta, 0);
+						//vec.yawspeed_deg_s=speed_theta;
+					}
+
+					
+					float speed_front = PID_update(&manouver_control, center_y, center_box.y);
+					float speed_right = PID_update(&manouver_control, center_x, center_box.x);
+					
+
 					vec.forward_m_s=speed_front;
-					vec.right_m_s=speed_right;
-					vec.yawspeed_deg_s=speed_theta;
+					vec.right_m_s=-speed_right;
+					vec.down_m_s=0.0f;
+					vec.yawspeed_deg_s=0.0f;
+
 					
 					offboard.set_velocity_body(vec);
 
-					cout << "theta_cmd" << " " << speed_theta;
-					cout << "front_cmd" << " " << speed_front;
+					cout << "theta_err" << " " << error_theta << "\n";
+					cout << "y_err" << " " << (center_y - center_box.y) << "\n";
+					cout << "x_err" << " " << (center_x - center_box.x) << "\n";
+					cout << "speed_front" << " " << speed_front << "\n";
+					cout << "speed_right" << " " << speed_right << "\n";
+
 
 					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 
-					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
-
-					drawMarker(frame, Center(bbox), Scalar(0, 255, 255)); //mark the center 
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
 
-					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "x_cmd : " + SSTR(float(speed_theta)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "y_cmd : " + SSTR(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					drawMarker(frame, Point(center_box.x, center_box.y), Scalar(0, 255, 255)); //mark the center 
+					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
+
+					putText(frame, "FPS : " + std::to_string(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "y_cmd : " + std::to_string(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 
 				}
 				else
@@ -490,4 +586,4 @@ int main(int argc, char** argv)
 	std::cout <<"Done...!\n";
 
 	return 0;
-}
+	}
