@@ -4,6 +4,14 @@
 
 using namespace cv;
 
+class params
+{
+	public:
+	int mode;
+
+
+};
+
 std::string genArgument(const std::string& argName, const std::string& help,
 	const std::string& modelName, const std::string& zooFile,
 	char key = ' ', std::string defaultVal = "");

@@ -62,38 +62,6 @@ using std::this_thread::sleep_for;
 #include "model.hpp"
 #include "track_utils.hpp"
 
-typedef struct {
-
-	/* Controller gains */
-	float Kp;
-	float Ki;
-	float Kd;
-
-	/* Derivative low-pass filter time constant */
-	float tau;
-
-	/* Output limits */
-	float limMin;
-	float limMax;
-
-	/* Integrator limits */
-	float limMinInt;
-	float limMaxInt;
-
-	/* Sample time (in seconds) */
-	float T;
-
-	/* Controller "memory" */
-	float integrator;
-	float prevError;			/* Required for integrator */
-	float differentiator;
-	float prevMeasurement;		/* Required for differentiator */
-
-	/* Controller output */
-	float out;
-
-} PID;
-
 std::shared_ptr<System> get_system(Mavsdk& mavsdk)
 {
 	std::cout << "Waiting to discover system...\n";
@@ -125,71 +93,11 @@ std::shared_ptr<System> get_system(Mavsdk& mavsdk)
 	return fut.get();
 }
 
-
-float PID_update(PID* pid, float setpoint, float measurement) {
-
-	float error = setpoint - measurement;
-
-	/*
-	* Proportional
-	*/
-	float proportional = pid->Kp * error;
-
-	/*
-	* Integral
-	*/
-	pid->integrator = pid->integrator + 0.5f * pid->Ki * pid->T * (error + pid->prevError);
-
-	/* Anti-wind-up via integrator clamping */
-	if (pid->integrator > pid->limMaxInt) {
-		pid->integrator = pid->limMaxInt;
-	}
-	else if (pid->integrator < pid->limMinInt) {
-		pid->integrator = pid->limMinInt;
-	}
-
-	/*
-	* Derivative (band-limited differentiator)
-	*/
-
-	pid->differentiator = -(2.0f * pid->Kd * (measurement - pid->prevMeasurement)	/* Note: derivative on measurement, therefore minus sign in front of equation! */
-		+ (2.0f * pid->tau - pid->T) * pid->differentiator)
-		/ (2.0f * pid->tau + pid->T);
-
-	/*
-	* Compute output and apply limits
-	*/
-	pid->out = proportional + pid->integrator + pid->differentiator;
-
-	if (pid->out > pid->limMax) {
-		pid->out = pid->limMax;
-	}
-	else if (pid->out < pid->limMin) {
-		pid->out = pid->limMin;
-	}
-
-	/* Store error and measurement for later use */
-	pid->prevError = error;
-	pid->prevMeasurement = measurement;
-
-	/* Return controller output */
-	return pid->out;
-}
-
-void PID_init(PID* pid) {
-	pid->integrator = 0.0f;
-	pid->prevError = 0.0f;
-	pid->differentiator = 0.0f;
-	pid->prevMeasurement = 0.0f;
-	pid->out = 0.0f;
-}
-
-
 static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 3; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
+int mode = 0; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
 int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
@@ -254,8 +162,6 @@ int main(int argc, char** argv)
 	PID angle_control = { PID_KP_ANG, PID_KI_ANG, PID_KD_ANG, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
 
-						  
-
 	PID_init(&manouver_control);
 	PID_init(&angle_control);
 
@@ -285,8 +191,6 @@ int main(int argc, char** argv)
 	auto telemetry = Telemetry{ system };
 	auto gimbal = Gimbal{system};
 
-
-           
 	while (!telemetry.health_all_ok()) {
 		std::cout << "Waiting for system to be ready\n";
 		sleep_for(seconds(1));
@@ -349,9 +253,6 @@ int main(int argc, char** argv)
 	VideoCapture video;
 	video = VideoCapture("udpsrc port=5600 ! application/x-rtp, media=video,clock-rate=90000, encoding-name=H264, payload=96 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink", CAP_GSTREAMER);
 
-
-
-
     Offboard::VelocityBodyYawspeed stay{};
     offboard.set_velocity_body(stay);
 
@@ -372,10 +273,6 @@ int main(int argc, char** argv)
 
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
 	scaleBox<Rect2d> scbox;
-
-	
-
-
 
 	//VideoCapture video;
 	//video = VideoCapture("udpsrc port=5600 ! application/x-rtp, media=video,clock-rate=90000, encoding-name=H264, payload=96 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink", CAP_GSTREAMER);
@@ -409,27 +306,14 @@ int main(int argc, char** argv)
 
 	while (true)
 	{
-
-		if(video.read(frame)&mode==3){
-			imshow(winname, frame);
-		}
-
-		int key = waitKey(5);
-
-		if(key == 'd'){
-			mode = 1;
-		}
-
-
-		
-		if (mode==1)
+		if (mode)
 		{
 			double timer = (double)getTickCount(); // start FPS timer
-			//if (!video.read(frame)) // frame read control
-				//break; // if frame error occurs
+			if (!video.read(frame)) // frame read control
+				break; // if frame error occurs
 
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 	
-			//cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
+			
 			t_frame = frame.clone();
 
 
@@ -441,6 +325,11 @@ int main(int argc, char** argv)
 			{
 				offboard.set_velocity_body(stay);// dur - ara // senaryoya göre değişebilir...
 				// get bbox from model...
+				#ifdef bypassmodel
+					bbox = selectROI(t_frame);
+					track_or_detect=true;
+					continue;
+				#endif
 				float confidence = yolov4.getObject<Rect2d>(frame, bbox);
 				CV_Assert(confidence > 0);
 				cout << "model initiated..." << endl;
@@ -483,57 +372,33 @@ int main(int argc, char** argv)
 					signed int error_y = center_y - center_box.y; // +x error sola yani - x yönüne git
 																  // -y error aşağı yani - y yönüne git
 												                  // +y error yukarı yani + y yönüne git
+					
+					double error_theta = atan2(error_y, error_x); 
 
-					double error_theta = 0;
+					float speed_theta = PID_update(&manouver_control, 0, error_theta);
+					float speed_front = PID_update(&manouver_control, center_box.y, center_y);
+					float speed_right = PID_update(&manouver_control, center_box.x, center_x);
 					Offboard::VelocityBodyYawspeed vec{};
-
-					if((center_box.x-center_x) < 0){
-						error_theta = 270 - (atan((center_box.y-center_y)/(center_box.x-center_x)) * 180 / PI);
-					}
-					else{
-						error_theta = 90 + (atan((center_box.y-center_y)/(center_box.x-center_x)) * 180 / PI);
-					}
-					//double error_theta = atan(error_y/error_x) * 180 / PI; 
-
-					if(error_theta > 180){
-						error_theta = -(error_theta - 180);
-						float speed_theta = PID_update(&angle_control, error_theta, 0);
-						//vec.yawspeed_deg_s=-speed_theta;
-					}
-					else{
-						float speed_theta = PID_update(&angle_control, error_theta, 0);
-						//vec.yawspeed_deg_s=speed_theta;
-					}
-
-					
-					float speed_front = PID_update(&manouver_control, center_y, center_box.y);
-					float speed_right = PID_update(&manouver_control, center_x, center_box.x);
-					
-
-					vec.forward_m_s=speed_front;
-					vec.right_m_s=-speed_right;
 					vec.down_m_s=0.0f;
-					vec.yawspeed_deg_s=0.0f;
-
+					vec.forward_m_s=speed_front;
+					vec.right_m_s=speed_right;
+					vec.yawspeed_deg_s=speed_theta;
 					
 					offboard.set_velocity_body(vec);
 
-					cout << "theta_err" << " " << error_theta << "\n";
-					cout << "y_err" << " " << (center_y - center_box.y) << "\n";
-					cout << "x_err" << " " << (center_x - center_box.x) << "\n";
-					cout << "speed_front" << " " << speed_front << "\n";
-					cout << "speed_right" << " " << speed_right << "\n";
-
+					cout << "theta_cmd" << " " << speed_theta;
+					cout << "front_cmd" << " " << speed_front;
 
 					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 
+					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
+
+					drawMarker(frame, Center(bbox), Scalar(0, 255, 255)); //mark the center 
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
 
-					drawMarker(frame, Point(center_box.x, center_box.y), Scalar(0, 255, 255)); //mark the center 
-					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
-
-					putText(frame, "FPS : " + std::to_string(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "y_cmd : " + std::to_string(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "x_cmd : " + SSTR(float(speed_theta)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "y_cmd : " + SSTR(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 
 				}
 				else
