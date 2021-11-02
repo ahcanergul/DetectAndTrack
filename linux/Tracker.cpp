@@ -17,6 +17,7 @@
 #include <opencv2/gapi/core.hpp> // GPU API library
 
 #include <mavsdk.h>
+#include <mavsdk/plugins/gimbal/gimbal.h>
 #include <plugins/action/action.h>
 #include <plugins/offboard/offboard.h>
 #include <plugins/telemetry/telemetry.h>
@@ -37,14 +38,18 @@ using std::this_thread::sleep_for;
 #define frame_ratio 15 // i� boxun ROI ye oran�
 #define min_box_size 64
 
-#define PID_KP  1.0f
-#define PID_KI  0.5f
-#define PID_KD  0.25f
+#define PID_KP  0.0009f
+#define PID_KI  0.0f
+#define PID_KD  0.0f
+
+#define PID_KP_ANG  15.0f
+#define PID_KI_ANG  0.0f
+#define PID_KD_ANG  0.0f
 
 #define PID_TAU 0.02f
 
-#define PID_LIM_MIN   -1000.0f
-#define PID_LIM_MAX   1000.0f
+#define PID_LIM_MIN   -100.0f
+#define PID_LIM_MAX   100.0f
 
 #define PID_LIM_MIN_T   0.0f
 #define PID_LIM_MAX_T   1000.0f
@@ -54,40 +59,10 @@ using std::this_thread::sleep_for;
 
 #define SAMPLE_TIME_S 0.01f
 
+#define PI 3.14159265
+
 #include "model.hpp"
 #include "track_utils.hpp"
-
-typedef struct {
-
-	/* Controller gains */
-	float Kp;
-	float Ki;
-	float Kd;
-
-	/* Derivative low-pass filter time constant */
-	float tau;
-
-	/* Output limits */
-	float limMin;
-	float limMax;
-
-	/* Integrator limits */
-	float limMinInt;
-	float limMaxInt;
-
-	/* Sample time (in seconds) */
-	float T;
-
-	/* Controller "memory" */
-	float integrator;
-	float prevError;			/* Required for integrator */
-	float differentiator;
-	float prevMeasurement;		/* Required for differentiator */
-
-	/* Controller output */
-	float out;
-
-} PID;
 
 std::shared_ptr<System> get_system(Mavsdk& mavsdk)
 {
@@ -120,71 +95,11 @@ std::shared_ptr<System> get_system(Mavsdk& mavsdk)
 	return fut.get();
 }
 
-
-float PID_update(PID* pid, float setpoint, float measurement) {
-
-	float error = setpoint - measurement;
-
-	/*
-	* Proportional
-	*/
-	float proportional = pid->Kp * error;
-
-	/*
-	* Integral
-	*/
-	pid->integrator = pid->integrator + 0.5f * pid->Ki * pid->T * (error + pid->prevError);
-
-	/* Anti-wind-up via integrator clamping */
-	if (pid->integrator > pid->limMaxInt) {
-		pid->integrator = pid->limMaxInt;
-	}
-	else if (pid->integrator < pid->limMinInt) {
-		pid->integrator = pid->limMinInt;
-	}
-
-	/*
-	* Derivative (band-limited differentiator)
-	*/
-
-	pid->differentiator = -(2.0f * pid->Kd * (measurement - pid->prevMeasurement)	/* Note: derivative on measurement, therefore minus sign in front of equation! */
-		+ (2.0f * pid->tau - pid->T) * pid->differentiator)
-		/ (2.0f * pid->tau + pid->T);
-
-	/*
-	* Compute output and apply limits
-	*/
-	pid->out = proportional + pid->integrator + pid->differentiator;
-
-	if (pid->out > pid->limMax) {
-		pid->out = pid->limMax;
-	}
-	else if (pid->out < pid->limMin) {
-		pid->out = pid->limMin;
-	}
-
-	/* Store error and measurement for later use */
-	pid->prevError = error;
-	pid->prevMeasurement = measurement;
-
-	/* Return controller output */
-	return pid->out;
-}
-
-void PID_init(PID* pid) {
-	pid->integrator = 0.0f;
-	pid->prevError = 0.0f;
-	pid->differentiator = 0.0f;
-	pid->prevMeasurement = 0.0f;
-	pid->out = 0.0f;
-}
-
-
 static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 1; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
+int mode = 0; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
 int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
@@ -245,12 +160,21 @@ int main(int argc, char** argv)
 
 	PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
+	
+	PID angle_control = { PID_KP_ANG, PID_KI_ANG, PID_KD_ANG, PID_TAU,PID_LIM_MIN,
+						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
 
 	PID_init(&manouver_control);
+	PID_init(&angle_control);
 
 	//mavsdk ilklendirmeleri
 
 	Mavsdk mavsdk;
+
+	Mat frame, t_frame; // frame storages
+	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
+
+	bool track_or_detect = false;
 
 	ConnectionResult connection_result = mavsdk.add_any_connection("udp://:14540");
 
@@ -267,8 +191,8 @@ int main(int argc, char** argv)
 	auto action = Action{ system };
 	auto offboard = Offboard{ system };
 	auto telemetry = Telemetry{ system };
+	auto gimbal = Gimbal{system};
 
-           
 	while (!telemetry.health_all_ok()) {
 		std::cout << "Waiting for system to be ready\n";
 		sleep_for(seconds(1));
@@ -281,6 +205,8 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	std::cout << "Armed\n";
+
+	action.set_takeoff_altitude(10.0);
 
 	const auto takeoff_result = action.takeoff();
 	if (takeoff_result != Action::Result::Success) {
@@ -299,7 +225,33 @@ int main(int argc, char** argv)
 		}
 		});
 
-	sleep_for(seconds(10));
+	float target_alt=10;
+	float current_position=0;
+
+	while (current_position<target_alt) {
+    	current_position = telemetry.position().relative_altitude_m;
+    	std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+
+
+	/*
+	std::cout << "Start controlling gimbal...\n";
+    Gimbal::Result gimbal_result = gimbal.take_control(Gimbal::ControlMode::Primary);
+    if (gimbal_result != Gimbal::Result::Success) {
+        std::cerr << "Could not take gimbal control: " << gimbal_result << '\n';
+        return 1;
+    }
+
+    std::cout << "Set yaw mode to lock to a specific direction...\n";
+    gimbal_result = gimbal.set_mode(Gimbal::GimbalMode::YawFollow);
+    if (gimbal_result != Gimbal::Result::Success) {
+        std::cerr << "Could not set to lock mode: " << gimbal_result << '\n';
+        return 1;
+    }
+	
+	gimbal.set_pitch_and_yaw(-90.0f, 0.0f);
+	*/
+
     Offboard::VelocityBodyYawspeed stay{};
     offboard.set_velocity_body(stay);
 
@@ -345,9 +297,6 @@ int main(int argc, char** argv)
 
 	Mat frame, t_frame; // frame storages
 	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-
-	video.read(frame);
-	imshow("test",frame);
 	bool track_or_detect = false;
 
 	while (true)
@@ -359,7 +308,7 @@ int main(int argc, char** argv)
 				break; // if frame error occurs
 
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 	
-			//cvtColor(frame, grayFrame, COLOR_BGR2GRAY); // mosse takes single channel img
+			
 			t_frame = frame.clone();
 
 
@@ -392,9 +341,10 @@ int main(int argc, char** argv)
 				resize(t_frame, t_frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC);
 				bbox = Rect(bbox.x * scale_w - ext_size, bbox.y * scale_h - ext_size, bbox.width * scale_w + 2 * ext_size, bbox.height * scale_h + 2 * ext_size);
 
-				scbox.init(t_frame, bbox);
+				//scbox.init(t_frame, bbox);
 				tracker->init(t_frame, bbox); // initialize tracker
-
+				
+				destroyWindow("detections");
 				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
 			}
 			else // tracking 
@@ -497,4 +447,4 @@ int main(int argc, char** argv)
 	std::cout <<"Done...!\n";
 
 	return 0;
-}
+	}

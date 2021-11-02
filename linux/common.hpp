@@ -1,8 +1,21 @@
 #pragma once
 #pragma warning(disable: 4996)
 #include <opencv2/core/utils/filesystem.hpp>
+#if __cplusplus > 199711L
+#define SSTR(X) (std::to_string(X))
+#else
+#define SSTR( x ) (static_cast< std::ostringstream &>(( std::ostringstream() << std::dec << x ) ).str()) // number to string / itoa()
+#endif
 
 using namespace cv;
+
+class params
+{
+	public:
+	int mode;
+
+
+};
 
 std::string genArgument(const std::string& argName, const std::string& help,
 	const std::string& modelName, const std::string& zooFile,
