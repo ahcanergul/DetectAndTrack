@@ -249,9 +249,6 @@ int main(int argc, char** argv)
 	
 	gimbal.set_pitch_and_yaw(-90.0f, 0.0f);
 	*/
-	
-	VideoCapture video;
-	video = VideoCapture("udpsrc port=5600 ! application/x-rtp, media=video,clock-rate=90000, encoding-name=H264, payload=96 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink", CAP_GSTREAMER);
 
     Offboard::VelocityBodyYawspeed stay{};
     offboard.set_velocity_body(stay);
@@ -274,35 +271,31 @@ int main(int argc, char** argv)
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
 	scaleBox<Rect2d> scbox;
 
-	//VideoCapture video;
-	//video = VideoCapture("udpsrc port=5600 ! application/x-rtp, media=video,clock-rate=90000, encoding-name=H264, payload=96 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink", CAP_GSTREAMER);
-
-
-	// DOSYADAN OKUMA YAPACAKSAN KULLAN !!!!
-	/*
+	VideoCapture video;
 	if (!filename.empty())
 	{
-		//video.open("udp://127.0.0.1:5600");
+		video.open(filename);
 		video.set(CAP_PROP_FRAME_WIDTH, win_size_w); // resize the screen
 		video.set(CAP_PROP_FRAME_HEIGHT, win_size_h);
 		cout << "file founded!!!" << endl;
 	}
 	else
-		video.open(0);
+		{
+			video = VideoCapture("udpsrc port=5600 ! application/x-rtp, payload=26,clock-rate=90000, encoding-name=H264 ! rtpjitterbuffer mode=1 ! rtph264depay ! h264parse ! decodebin ! videoconvert ! appsink", CAP_GSTREAMER);
+		}
 	// Exit if video is not opened
 	if (!video.isOpened())
 	{
-		cout << "Could not read video file" << endl;
+		cout << "Could not read video file: " << video.getBackendName() << endl;
 		waitKey(10);
 		return 1;
 	}
-	*/
 
 	cout << cv::getBuildInformation << endl; // get build inf - contrib is installed ?
 
-	//Mat frame, t_frame; // frame storages
-	//Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-	//bool track_or_detect = false;
+	Mat frame, t_frame; // frame storages
+	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
+	bool track_or_detect = false;
 
 	while (true)
 	{
@@ -346,9 +339,10 @@ int main(int argc, char** argv)
 				resize(t_frame, t_frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC);
 				bbox = Rect(bbox.x * scale_w - ext_size, bbox.y * scale_h - ext_size, bbox.width * scale_w + 2 * ext_size, bbox.height * scale_h + 2 * ext_size);
 
-				scbox.init(t_frame, bbox);
+				//scbox.init(t_frame, bbox);
 				tracker->init(t_frame, bbox); // initialize tracker
-
+				
+				destroyWindow("detections");
 				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
 			}
 			else // tracking 

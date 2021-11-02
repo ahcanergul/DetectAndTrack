@@ -58,9 +58,13 @@ class model
 			
 			postprocess(frame, outs, net, m_param.backend);
 			cout << "post process completed..." << endl;
-
+		
 			if (this->boxes.size() > 1)
-			{
+			{ 
+				float dist=0;
+				int num = 0;
+				if(bbox.empty())
+					bbox=Rect2d(0,0,0,0);
 				for (size_t i = 0; i < this->boxes.size(); i++)
 				{
 					Rect box = this->boxes.at(i);
@@ -84,23 +88,42 @@ class model
 						Point(box.x + labelSize.width, box.y + baseLine), Scalar::all(255), FILLED);
 					putText(frame, label, Point(box.x, box.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar());
 					
+					float distTemp=norm(Point2f(box.x,box.y)-Point2f(bbox.x,bbox.y));
+					if(distTemp<dist)
+					{
+						dist=distTemp;
+						num=i;
+					}
 				}
 				putText(frame, "hedeflerden bir tanesini secin", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 255, 10), 2);
 				imshow("detections", frame);
-				
-				waitKey(500);
-				int keyboard = -1;
-				/*
-				while (keyboard < 0)
-					keyboard = waitKey(10);	
-				keyboard = (int)(keyboard - 48);
-				CV_Assert(keyboard > -1);
-				*/
-				cout << "give a number:";
-				cin >> keyboard;
+			
+				int keyboard=0;
+				while(bbox.width*bbox.height==0)
+				{
+					num = 0;
+					do
+					{
+						keyboard = waitKey(0)%128;
+						if(keyboard>47)
+						{
+							num+=(int)(keyboard-48);
+							num*=10;
+						}
+						putText(frame, "Hedef:"+SSTR(int(num/10)), Point(100, 110), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 50, 200), 2);
+						imshow("detections", frame);
+					} while (keyboard!=13);
+					num/=10;
+					if(num > this->boxes.size()){
+					cout<<"Maksimum kare sayisindan fazla girdiniz. Lütfen tekrar giriniz..."<< num<<endl;
+					continue;
+					}
+					break;
+				}
+				cout<<"num:"<<num<<endl;
 
-				bbox = this->boxes.at(keyboard);
-				confidence = this->confidences.at(keyboard);
+				bbox = this->boxes.at(num);
+				confidence = this->confidences.at(num);
 			}
 			else if(this->boxes.size()==1)
 			{
