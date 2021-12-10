@@ -158,14 +158,18 @@ int main(int argc, char** argv)
 	yolov4.inpHeigth = win_size_h;
 	yolov4.inpWidth = win_size_w;
 
-	PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
+        PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
+						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
+
+	PID accelerator = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
 	
 	PID angle_control = { PID_KP_ANG, PID_KI_ANG, PID_KD_ANG, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
-
+	
 	PID_init(&manouver_control);
 	PID_init(&angle_control);
+	PID_init(&accelerator);
 
 	//mavsdk ilklendirmeleri
 
@@ -233,8 +237,6 @@ int main(int argc, char** argv)
     	std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 
-
-	/*
 	std::cout << "Start controlling gimbal...\n";
     Gimbal::Result gimbal_result = gimbal.take_control(Gimbal::ControlMode::Primary);
     if (gimbal_result != Gimbal::Result::Success) {
@@ -249,8 +251,10 @@ int main(int argc, char** argv)
         return 1;
     }
 	
-	gimbal.set_pitch_and_yaw(-90.0f, 0.0f);
-	*/
+	gimbal.set_pitch_and_yaw(-30.0f, 0.0f);
+	sleep_for(seconds(1));
+	gimbal.release_control();
+
 
     Offboard::VelocityBodyYawspeed stay{};
     offboard.set_velocity_body(stay);
@@ -298,7 +302,8 @@ int main(int argc, char** argv)
 	Mat frame, t_frame; // frame storages
 	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
 	bool track_or_detect = false;
-
+	Offboard::VelocityBodyYawspeed vec{};
+	
 	while (true)
 	{
 		if (mode)
@@ -358,7 +363,7 @@ int main(int argc, char** argv)
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
 					exp_bbox = bbox;
 					//scbox.updateSize(t_frame, bbox);
-
+					
 					int center_x = win_size_w / scale_w / 2;
 					int center_y = win_size_h / scale_h / 2;
 
@@ -369,21 +374,20 @@ int main(int argc, char** argv)
 																  // -y error aşağı yani - y yönüne git
 												                  // +y error yukarı yani + y yönüne git
 					
-					double error_theta = atan2(error_y, error_x); 
-
-					float speed_theta = PID_update(&manouver_control, 0, error_theta);
-					float speed_front = PID_update(&manouver_control, center_box.y, center_y);
-					float speed_right = PID_update(&manouver_control, center_box.x, center_x);
-					Offboard::VelocityBodyYawspeed vec{};
-					vec.down_m_s=0.0f;
-					vec.forward_m_s=speed_front;
-					vec.right_m_s=speed_right;
-					vec.yawspeed_deg_s=speed_theta;
+					float speed_front_setpoint = PID_update(&manouver_control, center_y, center_box.y);
+					float speed_yaw = PID_update(&angle_control, center_x, center_box.x);
 					
-					offboard.set_velocity_body(vec);
+					float speed_err = speed_front_setpoint - prev_cmd;
+					float speed_front_final = prev_cmd + (speed_err * acceleration_rate);
+					
+					prev_cmd = speed_front_final;
+					
+					vec.forward_m_s = speed_front_final;
+					vec.yawspeed_deg_s = -speed_yaw;
 
-					cout << "theta_cmd" << " " << speed_theta;
-					cout << "front_cmd" << " " << speed_front;
+					offboard.set_velocity_body(vec);
+					cout<<"speed"<<speed_front_final<<'\n';
+					cout<<"speed_setpoint"<<speed_front_setpoint<<'\n';
 
 					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 
