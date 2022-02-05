@@ -1,4 +1,4 @@
-# Install script for directory: /home/caner/px4/MAVSDK/DetectAndTrack
+# Install script for directory: /home/caner/DetectAndTrack/DetectAndTrack/linux
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -45,5 +45,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/home/caner/px4/MAVSDK/DetectAndTrack/build/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/home/caner/DetectAndTrack/DetectAndTrack/linux/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

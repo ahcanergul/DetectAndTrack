@@ -6,7 +6,7 @@
 
 #IncludeRegexTransform: 
 
-/home/caner/px4/MAVSDK/DetectAndTrack/Tracker.cpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/Tracker.cpp
 iostream
 -
 fstream
@@ -39,34 +39,38 @@ opencv2/gapi/core.hpp
 -
 mavsdk.h
 -
+mavsdk/plugins/gimbal/gimbal.h
+-
 plugins/action/action.h
 -
 plugins/offboard/offboard.h
 -
 plugins/telemetry/telemetry.h
 -
-model.hpp
-/home/caner/px4/MAVSDK/DetectAndTrack/model.hpp
-track_utils.hpp
-/home/caner/px4/MAVSDK/DetectAndTrack/track_utils.hpp
 future
 -
+model.hpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/model.hpp
+utils.hpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/utils.hpp
 
-/home/caner/px4/MAVSDK/DetectAndTrack/common.hpp
-opencv2/core/utils/filesystem.hpp
--
-
-/home/caner/px4/MAVSDK/DetectAndTrack/model.hpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/model.hpp
 opencv2/dnn.hpp
 -
 sstream
 -
-common.hpp
-/home/caner/px4/MAVSDK/DetectAndTrack/common.hpp
+model_common.hpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/model_common.hpp
 thread
 -
 
-/home/caner/px4/MAVSDK/DetectAndTrack/track_utils.hpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/model_common.hpp
+opencv2/core/utils/filesystem.hpp
+-
+utils.hpp
+/home/caner/DetectAndTrack/DetectAndTrack/linux/utils.hpp
+
+/home/caner/DetectAndTrack/DetectAndTrack/linux/utils.hpp
 
 /usr/include/mavsdk/connection_result.h
 sstream

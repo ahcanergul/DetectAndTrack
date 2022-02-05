@@ -4,7 +4,7 @@ set(CMAKE_DEPENDS_LANGUAGES
   )
 # The set of files for implicit dependencies of each language:
 set(CMAKE_DEPENDS_CHECK_CXX
-  "/home/caner/px4/MAVSDK/DetectAndTrack/Tracker.cpp" "/home/caner/px4/MAVSDK/DetectAndTrack/build/CMakeFiles/DetectAndTrack.dir/Tracker.cpp.o"
+  "/home/caner/DetectAndTrack/DetectAndTrack/linux/Tracker.cpp" "/home/caner/DetectAndTrack/DetectAndTrack/linux/build/CMakeFiles/DetectAndTrack.dir/Tracker.cpp.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")
 

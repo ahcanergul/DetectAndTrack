@@ -1,7 +1,7 @@
 #pragma once
 #include <opencv2/dnn.hpp>
 #include <sstream>
-#include "common.hpp"
+#include "model_common.hpp"
 
 #ifdef CV_CXX11
 #include <thread>

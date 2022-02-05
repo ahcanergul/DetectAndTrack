@@ -62,7 +62,7 @@ using std::this_thread::sleep_for;
 #define PI 3.14159265
 
 #include "model.hpp"
-#include "track_utils.hpp"
+#include "utils.hpp"
 
 std::shared_ptr<System> get_system(Mavsdk& mavsdk)
 {
@@ -174,11 +174,6 @@ int main(int argc, char** argv)
 	//mavsdk ilklendirmeleri
 
 	Mavsdk mavsdk;
-
-	Mat frame, t_frame; // frame storages
-	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-
-	bool track_or_detect = false;
 
 	ConnectionResult connection_result = mavsdk.add_any_connection("udp://:14540");
 
@@ -324,6 +319,7 @@ int main(int argc, char** argv)
 			if (!track_or_detect) // detection mode
 			{
 				offboard.set_velocity_body(stay);// dur - ara // senaryoya göre değişebilir...
+				manouver_control.prevError = 0;
 				// get bbox from model...
 				#ifdef bypassmodel
 					bbox = selectROI(t_frame);
@@ -377,10 +373,10 @@ int main(int argc, char** argv)
 					float speed_front_setpoint = PID_update(&manouver_control, center_y, center_box.y);
 					float speed_yaw = PID_update(&angle_control, center_x, center_box.x);
 					
-					float speed_err = speed_front_setpoint - prev_cmd;
-					float speed_front_final = prev_cmd + (speed_err * acceleration_rate);
+					float speed_err = speed_front_setpoint - manouver_control.prevError;
+					float speed_front_final = manouver_control.prevError + (speed_err * manouver_control.Ki);
 					
-					prev_cmd = speed_front_final;
+					manouver_control.prevError = speed_front_final;
 					
 					vec.forward_m_s = speed_front_final;
 					vec.yawspeed_deg_s = -speed_yaw;
@@ -397,8 +393,8 @@ int main(int argc, char** argv)
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
 
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "x_cmd : " + SSTR(float(speed_theta)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "y_cmd : " + SSTR(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "yaw_cmd : " + SSTR(float(speed_yaw)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "front_cmd : " + SSTR(float(speed_front_final)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 
 				}
 				else
