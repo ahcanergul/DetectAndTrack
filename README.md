@@ -1,4 +1,7 @@
 # DetectAndTrack
+Only linux amd64/arm base updates comming between the versions. Windows version still remain v1.0.0 
+
+
 
 run.bat --> otomatik detection&tracking girdisi almak için 
 kullanım:
