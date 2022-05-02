@@ -1,0 +1,3 @@
+/home/caner/DetectAndTrack/DetectAndTrack/linux/build/CMakeFiles/rebuild_cache.dir
+/home/caner/DetectAndTrack/DetectAndTrack/linux/build/CMakeFiles/edit_cache.dir
+/home/caner/DetectAndTrack/DetectAndTrack/linux/build/CMakeFiles/DetectAndTrack.dir
