@@ -7,7 +7,8 @@
 #include <future>
 #include <iostream>
 #include <thread>
-#include <math.h>   
+#include <math.h>  
+#include <string>   
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
@@ -16,17 +17,11 @@
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/gapi/core.hpp> // GPU API library
 
-#include <mavsdk.h>
+#include <mavsdk/mavsdk.h>
 #include <mavsdk/plugins/gimbal/gimbal.h>
-#include <plugins/action/action.h>
-#include <plugins/offboard/offboard.h>
-#include <plugins/telemetry/telemetry.h>
-
-#define bypass_model
-
-using namespace cv;
-using namespace std;
-using namespace mavsdk;
+#include <mavsdk/plugins/action/action.h>
+#include <mavsdk/plugins/offboard/offboard.h>
+#include <mavsdk/plugins/telemetry/telemetry.h>
 
 #include <future>
 
@@ -34,8 +29,10 @@ using std::chrono::milliseconds;
 using std::chrono::seconds;
 using std::this_thread::sleep_for;
 
-#define val 4
-#define frame_ratio 15 // i� boxun ROI ye oran�
+#define bypass_model
+
+//#define fg_histval 4 // ambigous definition!!! it will define in function scope 
+#define frame_ratio 15 // ic boxun ROI ye oran�
 #define min_box_size 64
 
 #define PID_KP  0.0009f
@@ -58,11 +55,17 @@ using std::this_thread::sleep_for;
 #define PID_LIM_MAX_INT  5.0f
 
 #define SAMPLE_TIME_S 0.01f
+#define acceleration_rate 0.5 //////////////////// fix it
 
 #define PI 3.14159265
 
-#include "model.hpp"
+
+#include "modelv5.hpp"
 #include "track_utils.hpp"
+
+using namespace cv;
+using namespace std;
+using namespace mavsdk;
 
 std::shared_ptr<System> get_system(Mavsdk& mavsdk)
 {
@@ -99,64 +102,37 @@ static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 0; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
+int mode = 0; // player modes --> play - 1 : stop - 0   || keys: esc, p --> pause , r--> return  
 int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
 "{ help  h     | | Print help message. }"
-"{ @alias      | | An alias name of model to extract preprocessing parameters from models.yml file. }"
-"{ zoo         | models.yml | An optional path to file with preprocessing parameters }"
 "{ device      |  0 | camera device number. }"
 "{ input i     | | Path to input image or video file. Skip this argument to capture frames from a camera. }"
-"{ framework f | | Optional name of an origin framework of the model. Detect it automatically if it does not set. }"
+"{ model       | | Path to model weigths file}"
 "{ classes     | | Optional path to a text file with names of classes to label detected objects. }"
 "{ thr         | .5 | Confidence threshold. }"
 "{ nms         | .4 | Non-maximum suppression threshold. }"
-"{ backend     |  0 | Choose one of computation backends: "
-"0: automatically (by default), "
-"1: Halide language (http://halide-lang.org/), "
-"2: Intel's Deep Learning Inference Engine (https://software.intel.com/openvino-toolkit), "
-"3: OpenCV implementation, "
-"4: VKCOM, "
-"5: CUDA }"
-"{ target      | 0 | Choose one of target computation devices: "
-"0: CPU target (by default), "
-"1: OpenCL, "
-"2: OpenCL fp16 (half-float precision), "
-"3: VPU, "
-"4: Vulkan, "
-"6: CUDA, "
-"7: CUDA fp16 (half-float preprocess) }"
-"{ async       | 0 | Number of asynchronous forwards at the same time. "
-"Choose 0 for synchronous mode }";
+"{ GPU         | 0 | GPU enable}";
+
 
 int main(int argc, char** argv)
 {
 	CommandLineParser parser(argc, argv, keys);
 
-	const std::string modelName = parser.get<String>("@alias");
-	const std::string zooFile = parser.get<String>("zoo");
-	keys += genPreprocArguments(modelName, zooFile);
+	CV_Assert(parser.has("model")&&parser.has("classes"));
+	std::string modelPath = parser.get<String>("model"); // check wheter is accept model file 
+	std::string classes = parser.get<string>("classes");
 
-	parser = CommandLineParser(argc, argv, keys);
-
-	CV_Assert(parser.has("model"));
-	std::string modelPath = findFile(parser.get<String>("model"));
-	std::string configPath = findFile(parser.get<String>("config"));
-
-	// model object definitons
-	model_param param = { modelName, modelPath, configPath, parser.get<String>("framework"), parser.get<int>("backend"),
-						parser.get<int>("target"), parser.get<int>("async") };
-	model yolov4(param);
-	yolov4.confThreshold = parser.get<float>("thr");
-	yolov4.nmsThreshold = parser.get<float>("nms");
-	yolov4.scale = parser.get<float>("scale");
-	yolov4.swapRB = parser.get<bool>("rgb");
-	yolov4.mean = parser.get<float>("mean");
-	win_size_h = parser.get<int>("height");
-	win_size_w = parser.get<int>("width");
-	yolov4.inpHeigth = win_size_h;
-	yolov4.inpWidth = win_size_w;
+	const int nms_max_bbox_size = 4096;
+	model_param param = { modelPath, classes, nms_max_bbox_size, parser.get<bool>("GPU"), parser.get<float>("thr"), parser.get<float>("nms") };
+	modelv5 yolo(param);
+	
+	yolo.input_heigth = parser.get<int>("height");
+	yolo.input_width = parser.get<int>("width");
+	if(parser.has("scale"))
+		yolo.scale = parser.get<float>("scale");
+		
 
         PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
@@ -174,11 +150,6 @@ int main(int argc, char** argv)
 	//mavsdk ilklendirmeleri
 
 	Mavsdk mavsdk;
-
-	Mat frame, t_frame; // frame storages
-	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-
-	bool track_or_detect = false;
 
 	ConnectionResult connection_result = mavsdk.add_any_connection("udp://:14540");
 
@@ -266,16 +237,11 @@ int main(int argc, char** argv)
     }
     std::cout << "Offboard started\n";
 
-
-	if (parser.has("classes"))
-		yolov4.get_classes(parser.get<string>("classes"));
-
 	string filename;
 	if (parser.has("input"))
 		filename = parser.get<String>("input");
 
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
-	scaleBox<Rect2d> scbox;
 
 	VideoCapture video;
 	if (!filename.empty())
@@ -301,8 +267,10 @@ int main(int argc, char** argv)
 
 	Mat frame, t_frame; // frame storages
 	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
+	scaleBox<Rect2d> scbox;
 	bool track_or_detect = false;
 	Offboard::VelocityBodyYawspeed vec{};
+	float prev_cmd=0;
 	
 	while (true)
 	{
@@ -330,7 +298,7 @@ int main(int argc, char** argv)
 					track_or_detect=true;
 					continue;
 				#endif
-				float confidence = yolov4.getObject<Rect2d>(frame, bbox);
+				float confidence = yolo.getObject<Rect2d>(frame, bbox);
 				CV_Assert(confidence > 0);
 				cout << "model initiated..." << endl;
 
@@ -397,8 +365,8 @@ int main(int argc, char** argv)
 					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
 
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "x_cmd : " + SSTR(float(speed_theta)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "y_cmd : " + SSTR(float(speed_front)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "x_cmd : " + SSTR(float(speed_err)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
+					putText(frame, "y_cmd : " + SSTR(float(prev_cmd)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 
 				}
 				else

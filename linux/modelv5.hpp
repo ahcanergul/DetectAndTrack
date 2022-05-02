@@ -3,23 +3,21 @@
 #include <opencv2/core.hpp>
 #include <torch/script.h>
 #include <torch/torch.h>
-#define clock
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/dnn/dnn.hpp>
 
-using namespace dnn;
+#define clock
 
 struct model_param
 {
-	const std::string modelName;
-	std::string modelPath;
-	std::string configPath;
-	std::string framework;
-	//int backend;
-	//int target; // hedef
+	std::string modelfile;
+	std::string class_names_file;
+	int nms_max_bbox_size; // default 4096
 	bool is_gpu;
+	float confThreshold;
+	float nmsThreshold; //iouThreshold
 };
 
 struct objectInfo 
@@ -31,32 +29,76 @@ struct objectInfo
 
 
 class modelv5 {
-
 public:
 	model_param mparam;
 	int input_width; // preprocess sizes
 	int input_heigth;
-	float scale;
 	
-	float confThreshold;
-	float nmsThreshold; //iouThreshold
+	float scale; //optional param, unity if not defined 
 	
 	modelv5(model_param &param): mparam(param)
 	{
-	std::cout << "Input height = " << input_height << "\n";
-   	std::cout << "Input width = " << input_width << "\n\n"; 
+		std::cout << "Input height rescaled to " << input_heigth << "...\n";
+   		std::cout << "Input width rescaled to " << input_width << "...\n\n"; 
 	
-	 try {
-      		std::cout << "[ObjectDetector()] torch::jit::load( " << model_filename << " ); ... \n";
-      		model = torch::jit::load(model_filename);
-      		std::cout << "[ObjectDetector()] " << model_filename << " has been loaded \n\n";
+		loadModel();
+		std::cout << "Model loaded successfully... \n";
+		
+		model.eval();
+	}
+	~modelv5() {};
+	
+	template <typename T>
+	float getObject(cv::Mat frame, T& bbox);
+	
+	protected:
+	void loadModel(void);
+	void preprocess(const cv::Mat& input_image,std::vector<torch::jit::IValue>& inputs,cv::Size inpSize,float scale = 1);
+	void postprocess(const at::Tensor& output_tensor, float confThreshold, float nmsThreshold, std::vector<objectInfo>& results);
+	void XcenterYcenterWidthHeight2TopLeftBottomRight(const at::Tensor& xywh_bbox_tensor,at::Tensor& tlbr_bbox_tensor);
+private:
+	torch::jit::script::Module model;
+	std::vector<objectInfo> objects;
+	std::vector<std::string> class_names_;
+	
+	std::vector<cv::Rect> boxes;
+	std::vector<float> confidences;
+};
+
+
+void modelv5::loadModel(void)
+{
+
+	std::ifstream load_class_names(mparam.class_names_file);
+	if(load_class_names.is_open())
+	{
+		std::string class_names;
+		while(std::getline(load_class_names, class_names))
+			class_names_.emplace_back(class_names);
+		load_class_names.close(); 
+		
+		if(class_names_.size()==0)
+		{
+			std::cerr << "[ObjectDetector::LoadClassNames()] Error: labe names are empty \n";
+    			std::exit(EXIT_FAILURE);
+    		}
+	}
+	else {
+    		std::cerr << "[ObjectDetector::LoadClassNames()] Error: Could not open "<< mparam.class_names_file << "\n";
+    		std::exit(EXIT_FAILURE);
+  	}
+	/// loading model weights ................
+	try {
+      		std::cout << "[ObjectDetector()] torch::jit::load( " << mparam.modelfile << " ); ... \n"; 
+      		model = torch::jit::load(mparam.modelfile);
+      		std::cout << "[ObjectDetector()] " << mparam.modelfile << " has been loaded \n\n";
     	 }
    	 catch (const c10::Error& e) {
     		  std::cerr << e.what() << "\n";
      		  std::exit(EXIT_FAILURE);
    	 }
    	 catch (...) {
-     		 std::cerr << "[ObjectDetector()] Exception: Could not load " << model_filename << "\n";
+     		 std::cerr << "[ObjectDetector()] Exception: Could not load " << mparam.modelfile << "\n";
       	 	 std::exit(EXIT_FAILURE);
          }
          
@@ -72,141 +114,127 @@ public:
          	std::cout<<"Using CPU... \n\n";
          	model.to(torch::kCPU);
          }
-         
-         model.eval();
-	}
-	~modelv5() {};
-	
-	template <typename T>
-	float getObject(Mat frame, T& bbox);
-	
-	protected:
-	void inference(float confidence_threshold, float iou_threshold);
-	void preprocess(const cv::Mat& input_image,std::vector<torch::jit::IValue>& inputs,Size inpSize,float scale);
-	void postprocess(const at::Tensor& output_tensor, float confThreshold, float nmsThreshold, std::vector<objectInfo>& results);
-	void modelv5::XcenterYcenterWidthHeight2TopLeftBottomRight(const at::Tensor& xywh_bbox_tensor,at::Tensor& tlbr_bbox_tensor);
-private:
-	torch::jit::script::Module model_;
-	vector<objectInfo> objects;
-	std::vector<std::string> class_names_;
-
-};
+}
 
 
 template <typename T>
-float modelv5::getObject(Mat frame, T& bbox)
+float modelv5::getObject(cv::Mat frame, T& bbox)
 {
 	torch::NoGradGuard no_grad_guard;
 	std::vector<torch::jit::IValue> inputs;
 	std::vector<objectInfo> results;
+	float confidence;
+	
 	#ifdef clock
 	auto start_preprocess = std::chrono::high_resolution_clock::now();
-	preprocess(input_image, inputs, cv::Size(input_width,input_height), scale);
+	preprocess(frame, inputs, cv::Size(input_width,input_heigth), scale);
 	auto end_preprocess = std::chrono::high_resolution_clock::now();
 	
 	auto duration_preprocess = std::chrono::duration_cast<std::chrono::milliseconds>(end_preprocess - start_preprocess);
 	std::cout << "Pre-processing: " << duration_preprocess.count() << " [ms] \n";
 	
 	auto start_inference = std::chrono::high_resolution_clock::now();
-	at::Tensor output_tensor = model_.forward(inputs).toTuple()->elements()[0].toTensor();
+	at::Tensor output_tensor = model.forward(inputs).toTuple()->elements()[0].toTensor();
 	auto end_inference = std::chrono::high_resolution_clock::now();
 
 	auto duration_inference = std::chrono::duration_cast<std::chrono::milliseconds>(end_inference - start_inference);
 	std::cout << "Inference: " << duration_inference.count() << " [ms] \n";
 	
 	auto start_postprocess = std::chrono::high_resolution_clock::now();
-	postprocess(output_tensor, confThreshold, nmsThreshold, results);
+	postprocess(output_tensor, this->mparam.confThreshold, this->mparam.nmsThreshold, results);
 	auto end_postprocess = std::chrono::high_resolution_clock::now();
 	auto duration_postprocess = std::chrono::duration_cast<std::chrono::milliseconds>(end_postprocess - start_postprocess);
 	std::cout << "Post-processing: " << duration_preprocess.count() << " [ms] \n";
 	
 	#elif
 	PreProcess(input_image, inputs);
-	at::Tensor output_tensor = model_.forward(inputs).toTuple()->elements()[0].toTensor();
-	postprocess(output_tensor, confThreshold, nmsThreshold, results);
+	at::Tensor output_tensor = model.forward(inputs).toTuple()->elements()[0].toTensor();
+	postprocess(output_tensor, mparam.confThreshold, mparam.nmsThreshold, results);
 	#endif
 	
 	//select routine
 	if(this->objects.size()>0)
 	{
-	 for(auto& obj :this->objects.size()>0)
-	 	Rect box = obj.bbox;
-		std::string label = format("%.2f", obj.confidence);
+	 for(auto& obj : this->objects)
+	 {
+	 	cv::Rect box = obj.bbox;
+		std::string label = cv::format("%.2f", obj.confidence);
 	 	int classId = obj.classId;
 		
-		CV_Assert( classId < (int)classes.size());
-		label = std::to_string(classId + ":" + class_names_.at(classId) + "-" + label);
+		CV_Assert( classId < (int)class_names_.size());
+		label = std::to_string(classId) + ":" + (std::string)(class_names_.at(classId)) + "-" + (std::string)(label);
 		
 		int baseLine;
-		Size labelSize = getTextSize(label, FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
-		box.y = max(box.y, labelSize.height);
+		cv::Size labelSize = getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+		box.y = MAX(box.y, labelSize.height);
 		
-		rectangle(frame, Point(box.x, box.y - labelSize.height),
-						Point(box.x + labelSize.width, box.y + baseLine), Scalar::all(255), FILLED);
-		putText(frame, label, Point(box.x, box.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar());
+		cv::rectangle(frame, cv::Point(box.x, box.y - labelSize.height),
+						cv::Point(box.x + labelSize.width, box.y + baseLine), cv::Scalar::all(255), cv::FILLED);
+		cv::putText(frame, label, cv::Point(box.x, box.y), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar());
 	 }
+
 	
-	putText(frame, "hedeflerden bir tanesini secin", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 255, 10), 2);
-	imshow("detections", frame);
-	//////////////////////////////// düzelt //////////////////////////////////////
-	int keyboard=0;
-		while(bbox.width*bbox.height==0)
+		cv::putText(frame, "hedeflerden bir tanesini secin", cv::Point(100, 80), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 255, 10), 2);
+		cv::imshow("detections", frame);
+		int keyboard=0;
+		int num;
+		while(true)
 		{
-			int num = 0;
+			num = 0;
 			do
 			{
-				keyboard = waitKey(0)%128;
+				keyboard = cv::waitKey(0)%128;
 				if(keyboard>47)
 				{
 					num+=(int)(keyboard-48);
 					num*=10;
 				}
-				putText(frame, "Hedef:"+SSTR(int(num/10)), Point(100, 110), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 50, 200), 2);
-				imshow("detections", frame);
+				cv::putText(frame, "Hedef:"+std::to_string(int(num/10)), cv::Point(100, 110), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 50, 200), 2);
+				cv::imshow("detections", frame);
 				} while (keyboard!=13);
 					num/=10;
 					if(num > this->objects.size()){
-						cout<<"Maksimum kare sayisindan fazla girdiniz. Lütfen tekrar giriniz..."<< num<<endl;
+						std::cout<<"Maksimum kare sayisindan fazla girdiniz. Lütfen tekrar giriniz..."<< num<<std::endl;
 					continue;
 					}
 					break;
 			}
-	cout<<"num:"<<num<<endl;
-	bbox = this->boxes.at(num);
-	confidence = this->confidences.at(num);
-	
+		std::cout<<"num:"<<num<<std::endl;
+		bbox = this->boxes.at(num);
+		confidence = this->confidences.at(num);
+	}
 	else if(this->boxes.size()==1)
 	{
 		bbox = this->boxes.back();
-		this->boxes.clear();
 		confidence = this->confidences.back();
-		this->confidences.clear();
-		}
-		else
-		{
-			putText(frame, "hedef bulunamadi", Point(100, 80), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 0, 255), 2);
-			imshow("detections", frame);
-			waitKey(10000);
-			return 0;
-		}
-		return confidence;
 	}
+	else
+	{
+		cv::putText(frame, "hedef bulunamadi", cv::Point(100, 80), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 255), 2);
+		cv::imshow("detections", frame);
+		cv::waitKey(10000);
+		return 0;
+	}
+		this->boxes.clear();
+		this->confidences.clear();
+		this->objects.clear();
+return confidence;
 }
 
-void modelv5::preprocess(const cv::Mat& input_image,std::vector<torch::jit::IValue>& inputs,Size inpSize,float scale=1.0)
+void modelv5::preprocess(const cv::Mat& input_image,std::vector<torch::jit::IValue>& inputs,cv::Size inpSize,float scale)
 {
-	  Mat blob_image;
+	  cv::Mat blob_image;
 	  cv::resize(input_image, blob_image, cv::Size(), scale, scale);
 	  
 	  // 0 ~ 255 ---> 0.0 ~ 1.0
 	  cv::cvtColor(blob_image, blob_image, cv::COLOR_BGR2RGB);
 	  blob_image.convertTo(blob_image, CV_32FC3, 1.0 / 255.0);
 	  
-	  at::Tensor input_tensor = torch::from_blob(blob_image.data,{1, input_height, input_width, 3});
+	  at::Tensor input_tensor = torch::from_blob(blob_image.data,{1, input_heigth, input_width, 3});
 	  input_tensor = input_tensor.permute({0, 3, 1, 2}).contiguous(); // {Batch=1, Height, Width, Channel=3} -> {Batch=1, Channel=3, Height, Width}
 	  
 	  
-	if (is_gpu_) {
+	if (this->mparam.is_gpu) {
    		 input_tensor = input_tensor.to(torch::kCUDA);
    		 input_tensor = input_tensor.to(torch::kHalf);
   	  } else {
@@ -240,7 +268,7 @@ void modelv5::postprocess(const at::Tensor& output_tensor, float confThreshold, 
 	at::Tensor candidate_object_mask = output_tensor.select(-1,
                                                           object_confidence_idx); //slice with object conf(why so 4 is used) 
 														  
-	candidate_object_mask = candidate_object_mask.gt(confidence_threshold);
+	candidate_object_mask = candidate_object_mask.gt(mparam.confThreshold);
 	candidate_object_mask = candidate_object_mask.unsqueeze(-1); //retrieve last dimension again, dimension has changed when use select 
 	
 	// mask with candidate_object_mask[0] ... {Num of max bbox=25200, 1} --> [num_of_box,true/false] 
@@ -250,7 +278,7 @@ void modelv5::postprocess(const at::Tensor& output_tensor, float confThreshold, 
 	candidate_object_tensor = candidate_object_tensor.view({-1, num_bbox_confidence_class_idx}); 
 	
 	 if (candidate_object_tensor.size(0) == 0) {
-            return -1;
+           CV_Assert(0);
   }
   
 	at::Tensor xywh_bbox_tensor = candidate_object_tensor.slice(-1,
@@ -277,7 +305,7 @@ void modelv5::postprocess(const at::Tensor& output_tensor, float confThreshold, 
 	at::Tensor class_id_tensor = result_tensor.slice(-1, -1);
 	
 	 at::Tensor class_offset_bbox_tensor = result_tensor.slice(-1, 0, num_bbox_idx)
-                                          + nms_max_bbox_size_ * class_id_tensor; //offset by +4096 * class id
+                                          + this->mparam.nms_max_bbox_size * class_id_tensor; //offset by +4096 * class id
 										  
 	// Copies tensor to CPU to access tensor elements efficiently with TensorAccessor
  
@@ -304,9 +332,9 @@ void modelv5::postprocess(const at::Tensor& output_tensor, float confThreshold, 
   }
   
   std::vector<int> nms_indecies;
-  cv::dnn::NMSBoxes(offset_bboxes, class_scores, conftTreshold, nmsThreshold, nms_indecies);
+  cv::dnn::NMSBoxes(offset_bboxes, class_scores, confThreshold, nmsThreshold, nms_indecies);
   
-  ///////////////////// final ///////////
+  //////////////////--------/// final ///-------//////////////////////
 
 	this->objects.reserve(result_tensor_accessor.size(0));
   for (const auto& nms_idx : nms_indecies) {
@@ -314,9 +342,9 @@ void modelv5::postprocess(const at::Tensor& output_tensor, float confThreshold, 
   	float top_left_y = result_tensor_accessor[nms_idx][1];
     	float bottom_right_x = result_tensor_accessor[nms_idx][2];
     	float bottom_right_y = result_tensor_accessor[nms_idx][3];
-    	objects.emplace_back(objectInfo{Rect(top_left_x, top_left_y, bottom_right_x, bottom_right_y),result_class_accessor[nms_idx][5],result_class_accessor[nms_idx][4]});    
+    	objects.emplace_back(objectInfo{cv::Rect(top_left_x, top_left_y, bottom_right_x, bottom_right_y),result_tensor_accessor[nms_idx][5],result_tensor_accessor[nms_idx][4]});    
   }
- ////////////////////////////////////////////
+ //////////////////////////////////////////////////////////////////////
 }
 
 void modelv5::XcenterYcenterWidthHeight2TopLeftBottomRight(const at::Tensor& xywh_bbox_tensor,
@@ -340,18 +368,4 @@ void modelv5::XcenterYcenterWidthHeight2TopLeftBottomRight(const at::Tensor& xyw
                                            + xywh_bbox_tensor.select(bbox_dim, height_idx).div(2.0);
   
   return;
-}
-
-void modelv5::inference(float confidence_threshold, float iou_threshold)
-{
-	 std::cout << "=== Empty inferences to warm up === \n\n";
-	 for (std::size_t i = 0; i < 3; ++i) {
-    	cv::Mat tmp_image = cv::Mat::zeros(input_height_, input_width_, CV_32FC3);
-    	std::vector<ObjectInfo> tmp_results;
-    	Detect(tmp_image, 1.0, 1.0, tmp_results);
-  	}
-  	std::cout << "=== Warming up is done === \n\n\n";
-
-
-
 }
