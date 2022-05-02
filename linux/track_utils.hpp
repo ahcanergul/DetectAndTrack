@@ -1,12 +1,14 @@
 #pragma once
 //#define DEBUG1 // foreground histogram için debugging
-
 #if __cplusplus > 199711L
 #define SSTR(X) (std::to_string(X))
 #else
 #define SSTR( x ) (static_cast< std::ostringstream &>(( std::ostringstream() << std::dec << x ) ).str()) // number to string / itoa()
 #endif
 #define Center( r ) (Point((r.x + r.width/2),(r.y + r.height/2))) // r rect merkezi
+#define fg_histval 4
+using namespace cv;
+
 typedef struct {
 
 	/* Controller gains */
@@ -137,7 +139,7 @@ class scaleBox
 		recT updateSize(Mat grayFrame, recT bbox);
 
 	protected:
-		void foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int value=val);
+		void foregroundHistProb(Mat in, Size distSize, Mat& hist, Mat& probHist, int value=fg_histval);
 	private:
 		Mat grayROI, probmap; // target pixels probabilities map
 };
@@ -198,7 +200,7 @@ void scaleBox<recT>::init(Mat grayFrame, recT bbox)
 {
 	grayROI = grayFrame(bbox); // ROI the gray !!!
 	this->distSize = Size(grayROI.cols / frame_ratio, grayROI.rows / frame_ratio); // outer box's extra size
-	foregroundHistProb(grayROI, this->distSize, back_hist_old, probmap, val); // calc prob map that represents target shape
+	foregroundHistProb(grayROI, this->distSize, back_hist_old, probmap, fg_histval); // calc prob map that represents target shape
 
 	this->baseSize = momentSize(probmap); // get size from moments with using prob's map
 	this->bbox = bbox;
