@@ -246,7 +246,7 @@ int main(int argc, char** argv)
 	bool track_or_detect = false;
 	Offboard::VelocityBodyYawspeed vec{};
 	float prev_cmd=0;
-	
+	float lut_dist_error=[0,0.1,0.2,0.4,0.8,1];// look up table for screen error quantization
 	while (true)
 	{
 		if (mode)
@@ -320,10 +320,9 @@ int main(int argc, char** argv)
 					float speed_front_setpoint = PID_update(&manouver_control, center_y, center_box.y);
 					float speed_yaw = PID_update(&angle_control, center_x, center_box.x);
 					
-					float speed_err = speed_front_setpoint - prev_cmd;
-					float speed_front_final = prev_cmd + (speed_err * acceleration_rate);
+					float speed_front_final =  speed_front_setpoint / cos(30);
 					
-					prev_cmd = speed_front_final;
+					
 					
 					vec.forward_m_s = speed_front_final;
 					vec.yawspeed_deg_s = -speed_yaw;
