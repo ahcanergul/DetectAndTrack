@@ -7,6 +7,31 @@
 #endif
 #define Center( r ) (Point((r.x + r.width/2),(r.y + r.height/2))) // r rect merkezi
 #define fg_histval 4
+
+#define PID_KP  0.0009f
+#define PID_KI  0.0f
+#define PID_KD  0.0f
+
+#define PID_KP_ANG  15.0f
+#define PID_KI_ANG  0.0f
+#define PID_KD_ANG  0.0f
+
+#define PID_TAU 0.02f
+
+#define PID_LIM_MIN   -100.0f
+#define PID_LIM_MAX   100.0f
+
+#define PID_LIM_MIN_T   0.0f
+#define PID_LIM_MAX_T   1000.0f
+
+#define PID_LIM_MIN_INT -5.0f
+#define PID_LIM_MAX_INT  5.0f
+
+#define SAMPLE_TIME_S 0.01f
+#define acceleration_rate 0.5 //////////////////// fix it
+
+#define PI 3.14159265
+
 using namespace cv;
 
 typedef struct {
