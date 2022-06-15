@@ -35,7 +35,7 @@ using std::this_thread::sleep_for;
 #define frame_ratio 15 // ic boxun ROI ye oran�
 #define min_box_size 64
 
-#include "modelv5.hpp"
+#include "modelv4.hpp"
 #include "track_utils.hpp"
 
 using namespace cv;
@@ -82,32 +82,60 @@ int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
 "{ help  h     | | Print help message. }"
+"{ @alias      | | An alias name of model to extract preprocessing parameters from models.yml file. }"
+"{ zoo         | models.yml | An optional path to file with preprocessing parameters }"
 "{ device      |  0 | camera device number. }"
 "{ input i     | | Path to input image or video file. Skip this argument to capture frames from a camera. }"
-"{ model       | | Path to model weigths file}"
+"{ framework f | | Optional name of an origin framework of the model. Detect it automatically if it does not set. }"
 "{ classes     | | Optional path to a text file with names of classes to label detected objects. }"
 "{ thr         | .5 | Confidence threshold. }"
 "{ nms         | .4 | Non-maximum suppression threshold. }"
-"{ GPU         | 0 | GPU enable}";
+"{ backend     |  0 | Choose one of computation backends: "
+"0: automatically (by default), "
+"1: Halide language (http://halide-lang.org/), "
+"2: Intel's Deep Learning Inference Engine (https://software.intel.com/openvino-toolkit), "
+"3: OpenCV implementation, "
+"4: VKCOM, "
+"5: CUDA }"
+"{ target      | 0 | Choose one of target computation devices: "
+"0: CPU target (by default), "
+"1: OpenCL, "
+"2: OpenCL fp16 (half-float precision), "
+"3: VPU, "
+"4: Vulkan, "
+"6: CUDA, "
+"7: CUDA fp16 (half-float preprocess) }"
+"{ async       | 0 | Number of asynchronous forwards at the same time. "
+"Choose 0 for synchronous mode }";
 
 
 int main(int argc, char** argv)
 {
 	CommandLineParser parser(argc, argv, keys);
 
-	CV_Assert(parser.has("model")&&parser.has("classes"));
-	std::string modelPath = parser.get<String>("model"); // check wheter is accept model file 
-	std::string classes = parser.get<string>("classes");
+	const std::string modelName = parser.get<String>("@alias");
+	const std::string zooFile = parser.get<String>("zoo");
+	keys += genPreprocArguments(modelName, zooFile);
 
-	const int nms_max_bbox_size = 4096;
-	model_param param = { modelPath, classes, nms_max_bbox_size, parser.get<bool>("GPU"), parser.get<float>("thr"), parser.get<float>("nms") };
-	modelv5 yolo(param);
-	
-	yolo.input_heigth = parser.get<int>("height");
-	yolo.input_width = parser.get<int>("width");
-	if(parser.has("scale"))
-		yolo.scale = parser.get<float>("scale");
-		
+	parser = CommandLineParser(argc, argv, keys);
+
+	CV_Assert(parser.has("model"));
+	std::string modelPath = findFile(parser.get<String>("model"));
+	std::string configPath = findFile(parser.get<String>("config"));
+
+	// model object definitons
+	model_param param = { modelName, modelPath, configPath, parser.get<String>("framework"), parser.get<int>("backend"),
+						parser.get<int>("target"), parser.get<int>("async") };
+	model yolov4(param);
+	yolov4.confThreshold = parser.get<float>("thr");
+	yolov4.nmsThreshold = parser.get<float>("nms");
+	yolov4.scale = parser.get<float>("scale");
+	yolov4.swapRB = parser.get<bool>("rgb");
+	yolov4.mean = parser.get<float>("mean");
+	win_size_h = parser.get<int>("height");
+	win_size_w = parser.get<int>("width");
+	yolov4.inpHeigth = win_size_h;
+	yolov4.inpWidth = win_size_w;
 
         PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
 						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
