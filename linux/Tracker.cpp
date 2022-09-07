@@ -7,8 +7,7 @@
 #include <future>
 #include <iostream>
 #include <thread>
-#include <math.h>  
-#include <string>   
+#include <math.h>   
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
@@ -17,67 +16,23 @@
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/gapi/core.hpp> // GPU API library
 
-#include <mavsdk/mavsdk.h>
-#include <mavsdk/plugins/gimbal/gimbal.h>
-#include <mavsdk/plugins/action/action.h>
-#include <mavsdk/plugins/offboard/offboard.h>
-#include <mavsdk/plugins/telemetry/telemetry.h>
-
-#include <future>
-
-using std::chrono::milliseconds;
-using std::chrono::seconds;
-using std::this_thread::sleep_for;
-
-#define bypass_model
-
-//#define fg_histval 4 // ambigous definition!!! it will define in function scope 
-#define frame_ratio 15 // ic boxun ROI ye oran�
-#define min_box_size 64
-
-#include "modelv4.hpp"
-#include "track_utils.hpp"
-
 using namespace cv;
 using namespace std;
-using namespace mavsdk;
 
-std::shared_ptr<System> get_system(Mavsdk& mavsdk)
-{
-	std::cout << "Waiting to discover system...\n";
-	auto prom = std::promise<std::shared_ptr<System>>{};
-	auto fut = prom.get_future();
+#define val 4
+#define frame_ratio 15 // i� boxun ROI ye oran�
+#define min_box_size 64
 
-	// We wait for new systems to be discovered, once we find one that has an
-	// autopilot, we decide to use it.
-	mavsdk.subscribe_on_new_system([&mavsdk, &prom]() {
-		auto system = mavsdk.systems().back();
+#define PI 3.14159265
 
-		if (system->has_autopilot()) {
-			std::cout << "Discovered autopilot\n";
-
-			// Unsubscribe again as we only want to find one system.
-			mavsdk.subscribe_on_new_system(nullptr);
-			prom.set_value(system);
-		}
-		});
-
-	// We usually receive heartbeats at 1Hz, therefore we should find a
-	// system after around 3 seconds max, surely.
-	if (fut.wait_for(seconds(3)) == std::future_status::timeout) {
-		std::cerr << "No autopilot found.\n";
-		return {};
-	}
-
-	// Get discovered system now.
-	return fut.get();
-}
+#include "model.hpp"
+#include "track_utils.hpp"
 
 static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 0; // player modes --> play - 1 : stop - 0   || keys: esc, p --> pause , r--> return  
+int mode = 0; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
 int win_size_h = 608, win_size_w = 608; // fixed win sizes
 
 std::string keys =
@@ -108,7 +63,6 @@ std::string keys =
 "{ async       | 0 | Number of asynchronous forwards at the same time. "
 "Choose 0 for synchronous mode }";
 
-
 int main(int argc, char** argv)
 {
 	CommandLineParser parser(argc, argv, keys);
@@ -137,114 +91,17 @@ int main(int argc, char** argv)
 	yolov4.inpHeigth = win_size_h;
 	yolov4.inpWidth = win_size_w;
 
-        PID manouver_control = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
-						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
-
-	PID accelerator = { PID_KP, PID_KI, PID_KD, PID_TAU,PID_LIM_MIN,
-						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
-	
-	PID angle_control = { PID_KP_ANG, PID_KI_ANG, PID_KD_ANG, PID_TAU,PID_LIM_MIN,
-						  PID_LIM_MAX,PID_LIM_MIN_INT, PID_LIM_MAX_INT,SAMPLE_TIME_S };
-	
-	PID_init(&manouver_control);
-	PID_init(&angle_control);
-	PID_init(&accelerator);
-
-	//mavsdk ilklendirmeleri
-
-	Mavsdk mavsdk;
-
-	ConnectionResult connection_result = mavsdk.add_any_connection("udp://:14540");
-
-	if (connection_result != ConnectionResult::Success) {
-		std::cerr << "Connection failed: " << connection_result << '\n';
-		return 1;
-	}
-
-	auto system = get_system(mavsdk);
-	if (!system) {
-		return 1;
-	}
-
-	auto action = Action{ system };
-	auto offboard = Offboard{ system };
-	auto telemetry = Telemetry{ system };
-	auto gimbal = Gimbal{system};
-
-	while (!telemetry.health_all_ok()) {
-		std::cout << "Waiting for system to be ready\n";
-		sleep_for(seconds(1));
-	}
-	std::cout << "System is ready\n";
-
-	const auto arm_result = action.arm();
-	if (arm_result != Action::Result::Success) {
-		std::cerr << "Arming failed: " << arm_result << '\n';
-		return 1;
-	}
-	std::cout << "Armed\n";
-
-	action.set_takeoff_altitude(10.0);
-
-	const auto takeoff_result = action.takeoff();
-	if (takeoff_result != Action::Result::Success) {
-		std::cerr << "Takeoff failed: " << takeoff_result << '\n';
-		return 1;
-	}
-
-	auto in_air_promise = std::promise<void>{};
-	auto in_air_future = in_air_promise.get_future();
-
-	telemetry.subscribe_landed_state([&telemetry, &in_air_promise](Telemetry::LandedState state) {
-		if (state == Telemetry::LandedState::InAir) {
-			std::cout << "Taking off has finished\n.";
-			telemetry.subscribe_landed_state(nullptr);
-			in_air_promise.set_value();
-		}
-		});
-
-	float target_alt=10;
-	float current_position=0;
-
-	while (current_position<target_alt) {
-    	current_position = telemetry.position().relative_altitude_m;
-    	std::this_thread::sleep_for(std::chrono::seconds(1));
-	}
-
-	std::cout << "Start controlling gimbal...\n";
-    Gimbal::Result gimbal_result = gimbal.take_control(Gimbal::ControlMode::Primary);
-    if (gimbal_result != Gimbal::Result::Success) {
-        std::cerr << "Could not take gimbal control: " << gimbal_result << '\n';
-        return 1;
-    }
-
-    std::cout << "Set yaw mode to lock to a specific direction...\n";
-    gimbal_result = gimbal.set_mode(Gimbal::GimbalMode::YawFollow);
-    if (gimbal_result != Gimbal::Result::Success) {
-        std::cerr << "Could not set to lock mode: " << gimbal_result << '\n';
-        return 1;
-    }
-	
-	gimbal.set_pitch_and_yaw(-30.0f, 0.0f);
-	sleep_for(seconds(1));
-	gimbal.release_control();
 
 
-    Offboard::VelocityBodyYawspeed stay{};
-    offboard.set_velocity_body(stay);
-
-    Offboard::Result offboard_result = offboard.start();
-    if (offboard_result != Offboard::Result::Success) {
-        std::cerr << "Offboard start failed: " << offboard_result << '\n';
-        return false;
-    }
-    std::cout << "Offboard started\n";
+	if (parser.has("classes"))
+		yolov4.get_classes(parser.get<string>("classes"));
 
 	string filename;
 	if (parser.has("input"))
 		filename = parser.get<String>("input");
 
 	Ptr<Tracker>tracker = TrackerMOSSE::create();//Tracker declaration
+	scaleBox<Rect2d> scbox;
 
 	VideoCapture video;
 	if (!filename.empty())
@@ -256,6 +113,7 @@ int main(int argc, char** argv)
 	}
 	else
 		{
+		cout<<"video test started..."<<endl;
 			video = VideoCapture("udpsrc port=5600 ! application/x-rtp, payload=26,clock-rate=90000, encoding-name=H264 ! rtpjitterbuffer mode=1 ! rtph264depay ! h264parse ! decodebin ! videoconvert ! appsink", CAP_GSTREAMER);
 		}
 	// Exit if video is not opened
@@ -265,16 +123,14 @@ int main(int argc, char** argv)
 		waitKey(10);
 		return 1;
 	}
-
+	
 	cout << cv::getBuildInformation << endl; // get build inf - contrib is installed ?
 
 	Mat frame, t_frame; // frame storages
 	Rect2d bbox, exp_bbox; // selected bbox ROI / resized bbox
-	scaleBox<Rect2d> scbox;
 	bool track_or_detect = false;
-	Offboard::VelocityBodyYawspeed vec{};
-	float prev_cmd=0;
-	float lut_dist_error=[0,0.1,0.2,0.4,0.8,1];// look up table for screen error quantization
+
+	video.read(frame);
 	while (true)
 	{
 		if (mode)
@@ -282,26 +138,22 @@ int main(int argc, char** argv)
 			double timer = (double)getTickCount(); // start FPS timer
 			if (!video.read(frame)) // frame read control
 				break; // if frame error occurs
-
+			
 			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 	
 			
 			t_frame = frame.clone();
 
-
-			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlarýný ayarla 
-
-			// Send it once before starting offboard, otherwise it will be rejected.
 			
 			if (!track_or_detect) // detection mode
 			{
-				offboard.set_velocity_body(stay);// dur - ara // senaryoya göre değişebilir...
+			
 				// get bbox from model...
 				#ifdef bypassmodel
 					bbox = selectROI(t_frame);
 					track_or_detect=true;
 					continue;
 				#endif
-				float confidence = yolo.getObject<Rect2d>(frame, bbox);
+				float confidence = yolov4.getObject<Rect2d>(frame, bbox);
 				CV_Assert(confidence > 0);
 				cout << "model initiated..." << endl;
 
@@ -334,41 +186,17 @@ int main(int argc, char** argv)
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
 					exp_bbox = bbox;
 					//scbox.updateSize(t_frame, bbox);
-					
+
 					int center_x = win_size_w / scale_w / 2;
 					int center_y = win_size_h / scale_h / 2;
 
-					Point center_box = Center(bbox);
-
-					signed int error_x = center_x - center_box.x; // -x error sağa yani + x yönüne git
-					signed int error_y = center_y - center_box.y; // +x error sola yani - x yönüne git
-																  // -y error aşağı yani - y yönüne git
-												                  // +y error yukarı yani + y yönüne git
-					
-					float speed_front_setpoint = PID_update(&manouver_control, center_y, center_box.y);
-					float speed_yaw = PID_update(&angle_control, center_x, center_box.x);
-					
-					float speed_front_final =  speed_front_setpoint / cos(30);
-					
-					
-					
-					vec.forward_m_s = speed_front_final;
-					vec.yawspeed_deg_s = -speed_yaw;
-
-					offboard.set_velocity_body(vec);
-					cout<<"speed"<<speed_front_final<<'\n';
-					cout<<"speed_setpoint"<<speed_front_setpoint<<'\n';
-
 					resize(frame, frame, Size(win_size_w / scale_w, win_size_h / scale_h), 0.0, 0.0, INTER_CUBIC);
 
-					drawMarker(frame, Center(bbox), Scalar(0, 255, 0)); //mark the center 
 
 					drawMarker(frame, Center(bbox), Scalar(0, 255, 255)); //mark the center 
-					drawMarker(frame, Point(center_x, center_y), Scalar(0, 255, 255)); //mark the center
+					//drawMarker(frame, Point(center_x, center_y), Scalar(0,0, 255)); //mark the screen center
 
 					putText(frame, "FPS : " + SSTR(int(fps)), Point(100, 50), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "x_cmd : " + SSTR(float(speed_err)), Point(100, 70), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
-					putText(frame, "y_cmd : " + SSTR(float(prev_cmd)), Point(100, 100), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(50, 170, 50), 2);
 
 				}
 				else
@@ -400,25 +228,6 @@ int main(int argc, char** argv)
 	}
 
 	// cleaning procedure in case of exit command
-	offboard_result = offboard.stop();
-    if (offboard_result != Offboard::Result::Success) {
-        std::cerr << "Offboard stop failed: " << offboard_result << '\n';
-        return false;
-    }
-    std::cout << "Offboard stopped\n";
-
-      const auto land_result = action.land();
-    if (land_result != Action::Result::Success) {
-        std::cerr << "Landing failed: " << land_result << '\n';
-        return 1;
-    }
-
-      while (telemetry.in_air()) {
-        std::cout << "Vehicle is landing...\n";
-        sleep_for(seconds(1));
-    	}
-    std::cout << "Landed!\n";
-	std::cout <<"Done...!\n";
 
 	return 0;
 	}
