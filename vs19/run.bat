@@ -1,3 +1,4 @@
+:: win batch code / Ahmet Caner Gül 
 @ECHO OFF
 :: Default parameters:
 SET height=832
