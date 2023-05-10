@@ -1,4 +1,4 @@
-:: win batch code / Ahmet Caner Gül 
+:: win batch code for simplicity, program can also work over main code directly
 @ECHO OFF
 :: Default parameters:
 SET height=832
