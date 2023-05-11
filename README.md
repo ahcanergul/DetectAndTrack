@@ -1,4 +1,9 @@
 # DetectAndTrack
+
+## About
+This repo contains detection and tracking code which purposed for tracking the urban traffic over uav. This proposed method consist of consecutive combination of DNN (Deep Neural Network) and fast image processing algorithm to be used on the image taken by the UAV camera. Firstly, target is detected by the DNN which trained on a dataset focused on urban traffic. Thereafter, detected target is started to be tracked with MOSSE(Minimum Output Sum of Squared Error) algorithm. Finally, maneuvers are calculated using the PID control algorithm over the relationship of tracked target position to the center of the window frame, in order to enable the UAV to follow the target in real-time.
+
+## Version Notes
 Only linux amd64/arm base updates comming between the versions. Windows version still remain v1.0.0 
 
 ~~modelv4 is optional file. It doesnt work current settings in file~~
