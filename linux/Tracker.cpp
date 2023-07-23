@@ -11,8 +11,8 @@
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/tracking.hpp> // contrib yüklenmeli !!!
+#include <opencv2/opencv.hpp> // opencv 4.4.0 is the only completely verified version for MOSSE !!!
+#include <opencv2/tracking.hpp> // contrib must be installed while runnning the opencv workspace!!!
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/gapi/core.hpp> // GPU API library
 
@@ -20,7 +20,7 @@ using namespace cv;
 using namespace std;
 
 #define val 4
-#define frame_ratio 15 // i� boxun ROI ye oran�
+#define frame_ratio 15 // ratio of internal to external boxes
 #define min_box_size 64
 
 #define PI 3.14159265
@@ -32,12 +32,12 @@ static float scale_h, scale_w; //scaling for convenient box size in tracking
 const float ext_size = 5; // extra required size 
 
 const char* winname = "Takip ekrani";
-int mode = 0; // player modes --> play - 1 : stop - 0   || tuþlar:  esc --> çýk , p --> pause , r--> return  
-int win_size_h = 608, win_size_w = 608; // fixed win sizes
+int mode = 0; // player modes --> play - 1 : stop - 0   || control keys:  esc --> exit , p --> pause , r--> return  
+int win_size_h = 608, win_size_w = 608; // predefined fixed window sizes
 
-std::string keys =
+std::string keys = // string keys remain default as in the sample code of YOLO, it can be changed with usage area
 "{ help  h     | | Print help message. }"
-"{ @alias      | | An alias name of model to extract preprocessing parameters from models.yml file. }"
+"{ @alias      | | An alias name of the model to extract preprocessing parameters from models.yml file. }"
 "{ zoo         | models.yml | An optional path to file with preprocessing parameters }"
 "{ device      |  0 | camera device number. }"
 "{ input i     | | Path to input image or video file. Skip this argument to capture frames from a camera. }"
@@ -45,7 +45,7 @@ std::string keys =
 "{ classes     | | Optional path to a text file with names of classes to label detected objects. }"
 "{ thr         | .5 | Confidence threshold. }"
 "{ nms         | .4 | Non-maximum suppression threshold. }"
-"{ backend     |  0 | Choose one of computation backends: "
+"{ backend     |  0 | Choose one of the computation backends: "
 "0: automatically (by default), "
 "1: Halide language (http://halide-lang.org/), "
 "2: Intel's Deep Learning Inference Engine (https://software.intel.com/openvino-toolkit), "
@@ -91,8 +91,6 @@ int main(int argc, char** argv)
 	yolov4.inpHeigth = win_size_h;
 	yolov4.inpWidth = win_size_w;
 
-
-
 	if (parser.has("classes"))
 		yolov4.get_classes(parser.get<string>("classes"));
 
@@ -104,19 +102,19 @@ int main(int argc, char** argv)
 	scaleBox<Rect2d> scbox;
 
 	VideoCapture video;
-	if (!filename.empty())
+	if (!filename.empty()) // if video file is provided
 	{
 		video.open(filename);
 		video.set(CAP_PROP_FRAME_WIDTH, win_size_w); // resize the screen
 		video.set(CAP_PROP_FRAME_HEIGHT, win_size_h);
 		cout << "file founded!!!" << endl;
 	}
-	else
+	else // in the absence of a video file, video streaming from a hardware cam is chosen as an input
 		{
-		cout<<"video test started..."<<endl;
+		cout<<"video test started..."<<endl; 
 			video = VideoCapture("udpsrc port=5600 ! application/x-rtp, payload=26,clock-rate=90000, encoding-name=H264 ! rtpjitterbuffer mode=1 ! rtph264depay ! h264parse ! decodebin ! videoconvert ! appsink", CAP_GSTREAMER);
 		}
-	// Exit if video is not opened
+	// Exit if the video is not opened
 	if (!video.isOpened())
 	{
 		cout << "Could not read video file: " << video.getBackendName() << endl;
@@ -139,7 +137,7 @@ int main(int argc, char** argv)
 			if (!video.read(frame)) // frame read control
 				break; // if frame error occurs
 			
-			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // frame boyutlar�n� ayarla 	
+			resize(frame, frame, Size(win_size_w, win_size_h), 0.0, 0.0, INTER_CUBIC); // adjust the frame size	
 			
 			t_frame = frame.clone();
 
@@ -173,7 +171,7 @@ int main(int argc, char** argv)
 				tracker->init(t_frame, bbox); // initialize tracker
 				
 				destroyWindow("detections");
-				track_or_detect = true; // tracking mode'a gecis yapiliyor ...
+				track_or_detect = true; // interchange to tracking mode ...
 			}
 			else // tracking 
 			{
@@ -181,7 +179,7 @@ int main(int argc, char** argv)
 				//imshow("resized frame", grayFrame);
 				if (tracker->update(t_frame, bbox)) // tracking check
 				{
-					float fps = getTickFrequency() / ((double)getTickCount() - timer); // sayacý al
+					float fps = getTickFrequency() / ((double)getTickCount() - timer); // take counter
 
 					bbox = Rect((bbox.x + ext_size) / scale_w, (bbox.y + ext_size) / scale_h, (bbox.width - 2 * ext_size) / scale_w, (bbox.height - 2 * ext_size) / scale_h);
 					exp_bbox = bbox;
@@ -218,7 +216,7 @@ int main(int argc, char** argv)
 		moveWindow(winname, 50, 50);
 		//waitKey(0); // to move frame by frame -- REMOVE BEFORE FLIGHT !!!
 
-		int keyboard = waitKey(5); // kullanýcýdan kontrol tuþu al 
+		int keyboard = waitKey(5); // take control key from user 
 		if (keyboard == 'q' || keyboard == 27) // quit
 			break;
 		else if (keyboard == 'p' || keyboard == 112) // pause
@@ -227,7 +225,7 @@ int main(int argc, char** argv)
 			mode = 1;
 	}
 
-	// cleaning procedure in case of exit command
+	// cleaning procedure in case of exit command failure
 
 	return 0;
 	}
