@@ -5,7 +5,7 @@ SET height=832
 SET width=832
 
 :: This batch file use for standart using of program with default params
-cd /D .\x64\Debug
+cd /D .\x64\Debug :: also this file is video search area
 IF ERRORLEVEL 1 (ECHO cd failed) ELSE (ECHO path changed successfully...)
 
 ECHO please choose one of input data which you want to use:
